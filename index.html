@@ -59,6 +59,7 @@
       <div class="mode-row">
         <button id="btnHotseat" class="btn btn-primary">Local Duel (1v1)</button>
         <button id="btnVsBot" class="btn btn-primary">Duel the Bot</button>
+        <button id="btnOnline" class="btn btn-primary">🌐 Online Duel</button>
       </div>
       <div class="mode-row">
         <button id="btnDescend" class="btn btn-primary">▼ Chambers of the Descent</button>
@@ -139,6 +140,28 @@
       <div class="mode-row">
         <button id="btnHandoffReady" class="btn btn-primary">Ready</button>
       </div>
+    </div>
+  </div>
+
+  <div id="onlineScreen" class="overlay hidden">
+    <div class="overlay-inner">
+      <h1 class="title">ONLINE DUEL</h1>
+      <p class="subtitle">Play the same match live across two computers.</p>
+      <div id="onlineStatus" class="online-status"></div>
+      <div id="onlineSetup">
+        <div class="online-block">
+          <label class="fury-option"><input type="checkbox" id="onlineFury"> Unleash <b>Furies</b></label>
+          <button id="btnCreateRoom" class="btn btn-primary">Create a room</button>
+          <p class="rules-note">You'll get a code to share. You play <b>Umbra</b> (host).</p>
+        </div>
+        <div class="online-or">— or —</div>
+        <div class="online-block">
+          <input id="joinCode" class="online-code-input" maxlength="6" placeholder="CODE" autocapitalize="characters" autocomplete="off" spellcheck="false">
+          <button id="btnJoinRoom" class="btn btn-primary">Join a room</button>
+          <p class="rules-note">Enter a friend's code. You play <b>Ember</b>.</p>
+        </div>
+      </div>
+      <div class="mode-row"><button id="btnOnlineClose" class="btn btn-ghost">Back</button></div>
     </div>
   </div>
 
@@ -266,6 +289,9 @@
 
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="net.js"></script>
 <script src="game.js"></script>
 <script src="ai.js"></script>
 </body>

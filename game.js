@@ -94,6 +94,8 @@
    * ============================================================ */
   let state = null;
   let nextPieceId = 1;
+  let onlineRoundSnap = null;   // identical round-start board both clients rewind to
+  let onlineRoundIds = null;    // ids present at round start (summons this round can't be commanded)
 
   function newStats() { return { kills: 0, losses: 0, spirals: 0, aegisUsed: 0, aegisBroken: 0, summons: 0, bestCombo: 0 }; }
   function bumpStat(side, key, n) {
@@ -143,6 +145,7 @@
       hazardsEnabled: false, terrain: null,
       boons: { light: {}, dark: {} },
       run: null,
+      onlineWaiting: false,
       stats: { light: newStats(), dark: newStats() },
       eventLog: [],
       winnerSide: null,
@@ -492,6 +495,17 @@
 
   function onValidate() {
     if (state.scene !== "planning") return;
+    if (state.mode === "online") {
+      if (state.onlineWaiting) return;
+      const side = state.humanSide;
+      state.planLocked[side] = true;
+      SG.Net.submitPlan(state.roundNumber, buildMyPacket());
+      state.onlineWaiting = true;
+      clearSelection();
+      state.wardMode = false; state.summonMenuOpen = false; state.summonArmed = null; state.pendingReaperStrike = null;
+      updatePlanBar(); refreshBanner();
+      return;
+    }
     const side = state.planningSide;
     state.planLocked[side] = true;
     clearSelection();
@@ -541,8 +555,9 @@
     state.scene = "planning";
     state.plan = { light: [], dark: [] };
     state.planLocked = { light: false, dark: false };
-    // vs bot: the human always plans first (whichever side they're on). Hotseat: light first.
-    state.planningSide = state.mode === "bot" ? state.humanSide : "light";
+    // vs bot / online: you control your own side. Hotseat: light first.
+    state.planningSide = (state.mode === "bot" || state.mode === "online") ? state.humanSide : "light";
+    state.onlineWaiting = false;
     state.wardMode = false;
     state.summonMenuOpen = false;
     state.summonArmed = null;
@@ -555,6 +570,7 @@
     }
     clearSelection();
     if (!state.isReplay) { state.history.push(snapshotState()); if (state.history.length > 14) state.history.shift(); }
+    if (state.mode === "online") { onlineRoundSnap = snapshotState(); onlineRoundIds = new Set(state.pieces.filter(p => p.alive).map(p => p.id)); }
     refreshBanner();
     updatePlanBar();
     syncSidePanels();
@@ -939,6 +955,65 @@
     m.obols = (m.obols || 0) + chambersCleared * 3 + (won ? 12 : 0);
     saveStore("sg.mirror", m);
     state.obolsEarned = chambersCleared * 3 + (won ? 12 : 0);
+  }
+
+  /* ---- Online Duel (Firebase-synced, deterministic peer resolution) ---- */
+  function startOnlineMatch(config, mySide) {
+    state = freshState();
+    nextPieceId = 1;
+    state.mode = "online";
+    state.humanSide = mySide;
+    state.furiesEnabled = !!config.furies;
+    state.hazardsEnabled = false;                 // terrain RNG would desync clients
+    state.terrain = null;
+    const o = loadStore("sg.options", {});
+    state.reduceMotion = o.reduceMotion || false;
+    state.battleSpeed = o.battleSpeed || 1;
+    state.colorGlyphs = o.colorGlyphs || false;
+    state.firstSide = config.firstSide || "light";
+    state.pieces = buildStartingPieces();
+    state.lastTs = performance.now();
+    dom.eventLog.innerHTML = "";
+    logEvent(`Online duel — you command ${sideLabel(mySide)}.`);
+    if (state.furiesEnabled) { spawnFury(state.lastTs); logEvent("Furies stalk this duel."); }
+    if (dom.onlineScreen) dom.onlineScreen.classList.add("hidden");
+    dom.startScreen.classList.add("hidden");
+    dom.gameOverScreen.classList.add("hidden");
+    dom.handoffScreen.classList.add("hidden");
+    dom.hud.classList.remove("hidden");
+    beginPlanningPhase();
+    syncSidePanels();
+  }
+  function buildMyPacket() {
+    const side = state.humanSide;
+    const startIds = onlineRoundIds || new Set();
+    const summons = state.pieces.filter(p => p.alive && p.side === side && !startIds.has(p.id)).map(p => ({ type: p.type, row: p.row, col: p.col }));
+    const wards = state.pieces.filter(p => p.alive && p.side === side && p.warded && startIds.has(p.id)).map(p => p.id);
+    const commands = (state.plan[side] || []).map(c => ({ pieceId: c.pieceId, kind: c.kind, row: c.row, col: c.col, targetId: c.targetId, reaperMode: c.reaperMode }));
+    return { commands, wards, summons };
+  }
+  function applyOnlinePacket(side, packet) {
+    if (!packet) return;
+    for (const s of (packet.summons || [])) summonPiece(side, s.type, s.row, s.col);
+    for (const id of (packet.wards || [])) { const p = pieceById(id); if (p && p.alive && p.side === side && !p.warded && state.aegis[side] > 0) { p.warded = true; state.aegis[side]--; } }
+  }
+  function resolveOnlineRound(plans) {
+    if (state.mode !== "online" || !onlineRoundSnap) return;
+    loadSnapshotPieces(onlineRoundSnap);                 // rewind both clients to the identical board
+    applyOnlinePacket("light", plans.light);             // deterministic order: light then dark
+    applyOnlinePacket("dark", plans.dark);
+    state.plan.light = (plans.light && plans.light.commands) || [];
+    state.plan.dark = (plans.dark && plans.dark.commands) || [];
+    state.onlineWaiting = false;
+    beginBattle(state.lastTs);
+  }
+  function onlineOpponentLeft() {
+    if (state.mode !== "online") return;
+    state.onlineWaiting = false;
+    if (dom.onlineStatus) dom.onlineStatus.innerHTML = "<b>Opponent disconnected.</b> The duel cannot continue.";
+    if (dom.onlineSetup) dom.onlineSetup.classList.remove("hidden");
+    dom.hud.classList.add("hidden");
+    if (dom.onlineScreen) dom.onlineScreen.classList.remove("hidden");
   }
 
   /* ---- Trials + Daily Gambit launchers ---- */
@@ -1779,7 +1854,8 @@
    "btnHelp","btnHelpGame","helpScreen","btnHelpClose","ledger","hallRecord",
    "difficulty","persona","btnTrials","btnDaily","trialsScreen","trialsList","btnTrialsClose","hazardToggle",
    "btnOptions","btnOptionsGame","optionsScreen","btnOptionsClose","optReduceMotion","optColorGlyphs","optSpeed","optSpeedVal",
-   "btnDescend","btnMirror","boonScreen","boonList","boonTitle","mirrorScreen","btnMirrorClose","mirrorObols","mirrorUpgrades"].forEach(id => { dom[id] = document.getElementById(id); });
+   "btnDescend","btnMirror","boonScreen","boonList","boonTitle","mirrorScreen","btnMirrorClose","mirrorObols","mirrorUpgrades",
+   "btnOnline","onlineScreen","onlineStatus","onlineSetup","onlineFury","btnCreateRoom","joinCode","btnJoinRoom","btnOnlineClose"].forEach(id => { dom[id] = document.getElementById(id); });
 
   function logEvent(text) {
     if (state.isReplay) return;
@@ -1794,7 +1870,8 @@
     if (!dom.turnBanner) return;
     let txt = "";
     const chamber = state.run && state.run.active ? `${CHAMBERS[state.run.chamber].name} (${state.run.chamber + 1}/${CHAMBERS.length}) · ` : "";
-    if (state.scene === "planning") txt = `${chamber}${sideLabel(state.planningSide)} — plan in secret · Round ${state.roundNumber + 1} · ${sideLabel(state.firstSide)} resolves first`;
+    if (state.scene === "planning" && state.mode === "online" && state.onlineWaiting) txt = "⏳ Plan committed — waiting for your opponent…";
+    else if (state.scene === "planning") txt = `${chamber}${sideLabel(state.planningSide)} — plan in secret · Round ${state.roundNumber + 1} · ${sideLabel(state.firstSide)} resolves first`;
     else if (state.scene === "battle") txt = (state.isReplay ? "↻ REPLAY · " : "") + (state.caption || "Battle!");
     else if (state.scene === "handoff") txt = "Pass the device…";
     dom.turnBanner.textContent = txt;
@@ -1869,6 +1946,7 @@
 
   function updatePlanBar() {
     if (state.scene !== "planning") { dom.planBar.classList.add("hidden"); dom.summonRow.classList.add("hidden"); return; }
+    if (state.mode === "online" && state.onlineWaiting) { dom.planBar.classList.add("hidden"); dom.summonRow.classList.add("hidden"); dom.reaperChoice.classList.add("hidden"); return; }
     dom.planBar.classList.remove("hidden");
     const side = state.planningSide;
     const used = new Set(state.plan[side].map(c => c.pieceId)).size;
@@ -1944,10 +2022,13 @@
     return { row, col };
   }
 
+  function onlineSelectable(pc) { return state.mode !== "online" || !onlineRoundIds || onlineRoundIds.has(pc.id); }
+
   canvas.addEventListener("click", (evt) => {
     if (state.scene !== "planning") return;
     // in bot mode, only the human side plans manually
     if (state.mode === "bot" && state.planningSide !== state.humanSide) return;
+    if (state.mode === "online" && state.onlineWaiting) return; // already committed this round
     const cell = canvasToCell(evt);
     if (!cell) { clearSelection(); return; }
     const grid = buildOccupancyGrid(state.pieces);
@@ -1990,11 +2071,14 @@
         }
         return;
       }
-      if (clicked && isPlanControllable(clicked)) { selectPiece(clicked); return; }
+      if (clicked && isPlanControllable(clicked) && onlineSelectable(clicked)) { selectPiece(clicked); return; }
       clearSelection();
       return;
     }
-    if (clicked && isPlanControllable(clicked)) selectPiece(clicked);
+    if (clicked && isPlanControllable(clicked)) {
+      if (!onlineSelectable(clicked)) { setCaption("A summoned piece must wait a round before it can act."); return; }
+      selectPiece(clicked);
+    }
   });
 
   dom.btnWard.addEventListener("click", () => { if (state.scene !== "planning") return; state.wardMode = !state.wardMode; if (state.wardMode) { state.summonMenuOpen = false; state.summonArmed = null; } clearSelection(); updatePlanBar(); });
@@ -2091,6 +2175,38 @@
     audio.boon(); refreshMirror(); refreshHallRecord();
   }
   if (dom.btnDescend) dom.btnDescend.addEventListener("click", () => startDescent());
+
+  /* ---- Online Duel wiring ---- */
+  function openOnline() {
+    if (dom.onlineSetup) dom.onlineSetup.classList.remove("hidden");
+    if (dom.onlineStatus) dom.onlineStatus.innerHTML = "";
+    if (dom.onlineScreen) dom.onlineScreen.classList.remove("hidden");
+  }
+  if (SG.Net) {
+    SG.Net.onStart = (config) => startOnlineMatch(config, config.mySide || SG.Net.getSide());
+    SG.Net.onBothPlans = (round, plans) => { if (round === state.roundNumber) resolveOnlineRound(plans); };
+    SG.Net.onOpponentLeft = () => onlineOpponentLeft();
+  }
+  if (dom.btnOnline) dom.btnOnline.addEventListener("click", openOnline);
+  if (dom.btnOnlineClose) dom.btnOnlineClose.addEventListener("click", () => { if (SG.Net) SG.Net.leave(); dom.onlineScreen.classList.add("hidden"); });
+  if (dom.btnCreateRoom) dom.btnCreateRoom.addEventListener("click", () => {
+    audio._ensure();
+    if (dom.onlineStatus) dom.onlineStatus.textContent = "Creating room…";
+    SG.Net.createRoom({ furies: dom.onlineFury && dom.onlineFury.checked }, (err, res) => {
+      if (err) { dom.onlineStatus.innerHTML = `<b style="color:var(--ember)">${err}</b>`; return; }
+      if (dom.onlineSetup) dom.onlineSetup.classList.add("hidden");
+      dom.onlineStatus.innerHTML = `Your room code:<br><span class="room-code">${res.code}</span><br>Share it, then wait for your opponent to join…`;
+    });
+  });
+  if (dom.btnJoinRoom) dom.btnJoinRoom.addEventListener("click", () => {
+    audio._ensure();
+    const codeVal = dom.joinCode ? dom.joinCode.value : "";
+    if (dom.onlineStatus) dom.onlineStatus.textContent = "Joining…";
+    SG.Net.joinRoom(codeVal, (err) => {
+      if (err) { dom.onlineStatus.innerHTML = `<b style="color:var(--ember)">${err}</b>`; return; }
+      // onStart fires from the SDK callback and launches the match
+    });
+  });
   if (dom.btnMirror) dom.btnMirror.addEventListener("click", () => { refreshMirror(); dom.mirrorScreen.classList.remove("hidden"); });
   if (dom.btnMirrorClose) dom.btnMirrorClose.addEventListener("click", () => dom.mirrorScreen.classList.add("hidden"));
   dom.btnUndo.addEventListener("click", () => { if (state.scene !== "planning") return; state.plan[state.planningSide].pop(); clearSelection(); updatePlanBar(); });
@@ -2145,6 +2261,8 @@
     if (dom.mirrorScreen) dom.mirrorScreen.classList.add("hidden");
     if (dom.trialsScreen) dom.trialsScreen.classList.add("hidden");
     if (dom.optionsScreen) dom.optionsScreen.classList.add("hidden");
+    if (dom.onlineScreen) dom.onlineScreen.classList.add("hidden");
+    if (state && state.mode === "online" && SG.Net) SG.Net.leave();
     runState = null;
   }
   function showGameOver() {

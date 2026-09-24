@@ -184,6 +184,18 @@ html, body {
 .opt-row b { color: var(--gold); min-width: 34px; text-align: right; }
 .hazard-option b { color: #ff8a5c; }
 
+.online-status { margin: 8px 0 14px; font-size: 0.92em; color: #d6cadf; min-height: 1.2em; }
+.room-code { font-size: 2em; letter-spacing: 0.28em; color: var(--gold); font-weight: bold; text-shadow: 0 0 16px rgba(232,198,87,0.5); }
+#onlineSetup { display: flex; gap: 18px; justify-content: center; align-items: stretch; flex-wrap: wrap; }
+.online-block { flex: 1 1 240px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px; border: 1px solid var(--panel-border); border-radius: 8px; background: rgba(20,10,20,0.5); }
+.online-block .rules-note { margin: 0; }
+.online-or { align-self: center; color: #8a7f9a; font-style: italic; }
+.online-code-input {
+  font-family: inherit; font-size: 1.4em; letter-spacing: 0.2em; text-align: center; text-transform: uppercase;
+  width: 160px; padding: 8px; border-radius: 6px; border: 1px solid var(--panel-border);
+  background: #241a30; color: var(--gold);
+}
+
 .fury-option {
   display: flex;
   align-items: center;
