@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stygian Gambit</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <div id="startScreen" class="overlay">
+    <div class="overlay-inner start-inner">
+      <h1 class="title">STYGIAN GAMBIT</h1>
+      <p class="subtitle">Wizard's chess of the underworld. Plan in secret. Every blow is lethal.</p>
+
+      <div class="legend">
+        <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="sovereign"></canvas><span><b>Sovereign</b> — your king. Endures 2 killing blows; the 3rd ends the war. Lose it, lose all.</span></div>
+        <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="reaper"></canvas><span><b>Reaper</b> — the queen. Endures 1 killing blow. Her strike slays the target and all foes beside her.</span></div>
+        <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="juggernaut"></canvas><span><b>Juggernaut</b> — lances any foe down a straight line. One hit, one kill.</span></div>
+        <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="trickster"></canvas><span><b>Trickster</b> — blinks diagonally; strikes foes up to 3 tiles down a diagonal.</span></div>
+        <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="wildrider"></canvas><span><b>Wildrider</b> — knight's leap over any blocker; slays an adjacent foe.</span></div>
+        <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="skirmisher"></canvas><span><b>Skirmisher</b> — steps forward, kills on the forward diagonals.</span></div>
+        <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="harrower"></canvas><span><b>Harrower</b> — teleports beside any ally; its kill drags down a foe next to the victim too.</span></div>
+        <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="fury" data-side="neutral"></canvas><span><b>Fury</b> — optional neutral horror. Prowls the board and slays whoever is nearest, either side.</span></div>
+      </div>
+
+      <p class="rules-note"><b>Each round has two phases.</b> In <b>Strategy</b>, you secretly command up to <b>3 pieces</b>
+      (Move or Strike), in the order you want them to act, and may spend an <b>Aegis</b> to shield a piece from one lethal blow
+      (limited supply). Validate to lock it in. In <b>Battle</b>, both plans play out interleaved — your 1st move, their 1st,
+      your 2nd, their 2nd… and who resolves first alternates every round. A strike whose target has slipped away hits only shadow.</p>
+
+      <p class="rules-note">Every kill you land yields <b>10 Crystals</b>. Spend them in the Strategy phase to <b>summon reinforcements</b>
+      onto any empty tile in your half of the board: <b>20</b> for a Skirmisher, <b>30</b> for a Juggernaut, Wildrider, or Trickster, <b>40</b> for a Harrower.</p>
+
+      <label class="fury-option"><input type="checkbox" id="furyToggle"> Unleash <b>Furies</b> — neutral horrors that stalk the board and slay either side</label>
+      <label class="fury-option hazard-option"><input type="checkbox" id="hazardToggle"> Awaken <b>Styx Hazards</b> — lava, chasms &amp; soul-fonts that reshape the board</label>
+
+      <div class="bot-options">
+        <label>Difficulty
+          <select id="difficulty">
+            <option value="easy">Easy</option>
+            <option value="normal" selected>Normal</option>
+            <option value="hard">Hard</option>
+            <option value="unfair">Unfair</option>
+          </select>
+        </label>
+        <label>Warden (bot)
+          <select id="persona">
+            <option value="random" selected>Random</option>
+            <option value="balanced">Balanced</option>
+            <option value="butcher">The Butcher</option>
+            <option value="warden">The Warden</option>
+            <option value="swarm">The Swarm</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="mode-row">
+        <button id="btnHotseat" class="btn btn-primary">Local Duel (1v1)</button>
+        <button id="btnVsBot" class="btn btn-primary">Duel the Bot</button>
+      </div>
+      <div class="mode-row">
+        <button id="btnDescend" class="btn btn-primary">▼ Chambers of the Descent</button>
+        <button id="btnMirror" class="btn btn-ghost">🜃 Mirror of Night</button>
+      </div>
+      <div class="mode-row">
+        <button id="btnTrials" class="btn btn-ghost">⚑ Trials of the Underworld</button>
+        <button id="btnDaily" class="btn btn-ghost">☀ Daily Gambit</button>
+      </div>
+      <div class="mode-row">
+        <button id="btnHelp" class="btn btn-ghost help-link">❔ How to Play · Aide</button>
+        <button id="btnOptions" class="btn btn-ghost help-link">⚙ Options</button>
+      </div>
+      <div id="hallRecord" class="hall-record"></div>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div id="turnBanner" class="turn-banner"></div>
+    <div class="board-wrap">
+      <canvas id="board" width="560" height="560"></canvas>
+    </div>
+    <div id="planBar" class="plan-bar hidden">
+      <span id="planLabel">—</span>
+      <span class="plan-spacer"></span>
+      <button id="btnSummon" class="btn btn-ghost">Summon ▾</button>
+      <button id="btnWard" class="btn btn-ghost">Ward: Off</button>
+      <button id="btnThreat" class="btn btn-ghost" title="Shade tiles enemies can strike">Doom Sight: Off</button>
+      <button id="btnForesight" class="btn btn-ghost" title="Forecast your own plan">Foresight: Off</button>
+      <button id="btnUndo" class="btn btn-ghost">Undo</button>
+      <button id="btnClear" class="btn btn-ghost">Clear</button>
+      <button id="btnReplay" class="btn btn-ghost" title="Re-watch the last clash">↻ Replay</button>
+      <button id="btnRevert" class="btn btn-ghost" title="Undo the last resolved round">↺ Undo Round</button>
+      <button id="btnValidate" class="btn btn-primary">Validate ▶</button>
+    </div>
+    <div id="summonRow" class="summon-row hidden">
+      <span class="summon-hint" id="summonHint">Summon a reinforcement onto your home rank:</span>
+      <div id="summonBtns" class="summon-btns"></div>
+    </div>
+    <div id="reaperChoice" class="summon-row hidden">
+      <span class="summon-hint">Reaper's strike:</span>
+      <button id="reaperSpiral" class="btn btn-ghost">Reaping Spiral — hold ground, slay all around</button>
+      <button id="reaperAdvance" class="btn btn-ghost">Slay &amp; Advance — take the foe's square</button>
+    </div>
+    <div class="hud-bar">
+      <div class="side-panel light">
+        <h3>Umbra</h3>
+        <div class="stat-row">Aegis <span id="aegisLight" class="aegis"></span></div>
+        <div class="stat-row">Crystals <span id="crystalLight" class="crystal">0</span></div>
+        <div class="stat-row royal" id="royalLight"></div>
+        <div class="stat-row muted">Forces <span id="countLight">16</span></div>
+      </div>
+
+      <div class="mid-panel">
+        <div id="eventLog" class="event-log"></div>
+        <div class="mid-buttons">
+          <button id="btnMute" class="btn btn-ghost">Mute</button>
+          <button id="btnHelpGame" class="btn btn-ghost">Aide</button>
+          <button id="btnOptionsGame" class="btn btn-ghost">⚙</button>
+          <button id="btnQuit" class="btn btn-ghost">Main Menu</button>
+        </div>
+      </div>
+
+      <div class="side-panel dark">
+        <h3>Ember</h3>
+        <div class="stat-row">Aegis <span id="aegisDark" class="aegis"></span></div>
+        <div class="stat-row">Crystals <span id="crystalDark" class="crystal">0</span></div>
+        <div class="stat-row royal" id="royalDark"></div>
+        <div class="stat-row muted">Forces <span id="countDark">16</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="handoffScreen" class="overlay hidden">
+    <div class="overlay-inner">
+      <h1 class="title" id="handoffTitle">PASS THE DEVICE</h1>
+      <p class="subtitle" id="handoffText">Hand over to your opponent. Their plan stays secret.</p>
+      <div class="mode-row">
+        <button id="btnHandoffReady" class="btn btn-primary">Ready</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="boonScreen" class="overlay hidden">
+    <div class="overlay-inner">
+      <h1 class="title" id="boonTitle">CHOOSE A BOON</h1>
+      <p class="subtitle">The gods extend their bargains. Choose one to carry deeper.</p>
+      <div id="boonList" class="trials-list"></div>
+    </div>
+  </div>
+
+  <div id="mirrorScreen" class="overlay hidden">
+    <div class="overlay-inner">
+      <h1 class="title">MIRROR OF NIGHT</h1>
+      <p class="subtitle">Spend Obols — <b id="mirrorObols">0</b> — on permanent power that carries between runs.</p>
+      <div id="mirrorUpgrades" class="trials-list"></div>
+      <div class="mode-row"><button id="btnMirrorClose" class="btn btn-primary">Back</button></div>
+    </div>
+  </div>
+
+  <div id="optionsScreen" class="overlay hidden">
+    <div class="overlay-inner">
+      <h1 class="title">RITES OF ACCESS</h1>
+      <p class="subtitle">Tune the tempo and readability of the underworld.</p>
+      <div class="options-body">
+        <label class="opt-row"><span>Battle speed</span>
+          <input type="range" id="optSpeed" min="0.5" max="2" step="0.25" value="1">
+          <b id="optSpeedVal">1×</b>
+        </label>
+        <label class="opt-row"><input type="checkbox" id="optReduceMotion"> <span>Reduce motion (no screenshake, flash or zoom)</span></label>
+        <label class="opt-row"><input type="checkbox" id="optColorGlyphs"> <span>Colorblind side glyphs (▲ Umbra / ▽ Ember)</span></label>
+      </div>
+      <div class="mode-row"><button id="btnOptionsClose" class="btn btn-primary">Done</button></div>
+    </div>
+  </div>
+
+  <div id="trialsScreen" class="overlay hidden">
+    <div class="overlay-inner">
+      <h1 class="title">TRIALS OF THE UNDERWORLD</h1>
+      <p class="subtitle">Handcrafted ordeals on the same engine. Clear them to fill the Hall.</p>
+      <div id="trialsList" class="trials-list"></div>
+      <div class="mode-row"><button id="btnTrialsClose" class="btn btn-primary">Back</button></div>
+    </div>
+  </div>
+
+  <div id="helpScreen" class="overlay hidden">
+    <div class="overlay-inner help-inner">
+      <h1 class="title">AIDE — COMMENT JOUER</h1>
+      <p class="subtitle">Les échecs des enfers : on planifie en secret, chaque coup est mortel.</p>
+
+      <div class="help-body">
+        <h2>But de la partie</h2>
+        <p>Tuer le <b>Sovereign</b> (roi) adverse. Il encaisse <b>2</b> coups mortels ; le <b>3<sup>e</sup></b> l'achève. Perdre son Sovereign, c'est perdre la guerre.</p>
+
+        <h2>Le round en deux phases</h2>
+        <p><b>1. Stratégie (secret).</b> Commande jusqu'à <b>3 pièces</b> — <b>Déplacer</b> (case bleue) ou <b>Frapper</b> (case rouge) — dans l'<b>ordre d'exécution</b> que tu choisis (des badges 1-2-3 s'affichent). Tu peux dépenser un <b>Aegis</b> pour protéger une pièce. Clique <b>Validate</b> pour verrouiller.</p>
+        <p><b>2. Bataille.</b> Les deux plans se jouent <b>en alternance</b> : ta 1<sup>re</sup> action, la sienne, ta 2<sup>e</sup>, la sienne… Le camp qui résout en premier <b>alterne à chaque round</b>. Une frappe dont la cible a bougé ne touche que l'ombre (<b>SHADOW</b>).</p>
+
+        <h2>Combat</h2>
+        <p>Toute frappe est <b>mortelle</b> (un coup = un mort). Exceptions : la <b>royauté</b> a des vies (Sovereign 3, Reaper 2) et une pièce protégée par un <b>Aegis</b> (le bouclier absorbe un coup mortel puis se brise). Sur un coup mortel, l'attaquant <b>prend la case</b> de la victime (capture) — sauf la Reaper (voir Reaping Spiral). Tes <b>alliés ne sont jamais touchés</b>.</p>
+
+        <h2>Les rôles</h2>
+        <ul class="help-roles">
+          <li><b>Sovereign</b> (roi) — bouge d'une case ; encaisse 2 coups mortels.</li>
+          <li><b>Reaper</b> (reine) — glisse dans toutes les directions. Sa <b>Reaping Spiral</b> tue la cible <i>et tous les ennemis adjacents</i>. Au choix : <b>rester</b> et balayer tout autour, ou <b>tuer et avancer</b> sur la case.</li>
+          <li><b>Juggernaut</b> (tour) — frappe en ligne droite.</li>
+          <li><b>Trickster</b> (fou) — clignote en diagonale ; frappe jusqu'à 3 cases en diagonale.</li>
+          <li><b>Wildrider</b> (cavalier) — saut en L par-dessus les obstacles.</li>
+          <li><b>Skirmisher</b> (pion) — avance d'une case, frappe en diagonale avant.</li>
+          <li><b>Harrower</b> — se téléporte à côté de n'importe quel allié ; son kill entraîne un ennemi voisin de la victime.</li>
+          <li><b>Fury</b> (option) — horreur neutre qui traque et tue le plus proche des deux camps.</li>
+        </ul>
+
+        <h2>Aegis (protection)</h2>
+        <p><b>3 charges</b> par partie. En phase Stratégie, active <b>Ward</b> puis clique une de tes pièces : elle reçoit un bouclier doré qui absorbe le prochain coup mortel, puis disparaît. Reclique pour récupérer la charge.</p>
+
+        <h2>Cristaux &amp; invocation</h2>
+        <p><b>10 cristaux</b> par ennemi tué. Enchaîner plusieurs kills dans une même bataille rapporte un <b>bonus SOULS</b>. Clique <b>Summon</b> puis une case vide de ta moitié pour invoquer un renfort : <b>20</b> Skirmisher · <b>30</b> Juggernaut/Wildrider/Trickster · <b>40</b> Harrower.</p>
+
+        <h2>Replay &amp; Undo</h2>
+        <p><b>↻ Replay</b> — rejoue visuellement la dernière bataille (le plateau revient à l'avant-combat, l'action se rejoue, puis retour à ta planification). <b>↺ Undo Round</b> — annule le dernier round résolu et te renvoie à sa planification (le mode « mauvais perdant »).</p>
+
+        <h2>Aides de planification</h2>
+        <p><b>Doom Sight</b> — ombre en rouge toutes les cases qu'une pièce ennemie peut frapper depuis sa position actuelle (ne révèle jamais le plan caché). <b>Foresight</b> — « Gaze into the Styx » : simule <i>uniquement ton plan</i> sur un plateau figé et affiche le résultat en fantômes (qui touche, qui meurt ✖, qui frappe l'ombre) pour affiner avant de valider.</p>
+
+        <h2>Cristaux : intérêts &amp; combos</h2>
+        <p>Au début de chaque phase Stratégie, tu gagnes des <b>intérêts</b> : +1 cristal par tranche de 20 en banque (plafonné +5) — thésauriser vs dépenser. Enchaîner des kills dans une même bataille déclenche des paliers <b>SOULS</b> qui rapportent des cristaux bonus.</p>
+
+        <h2>Difficulté &amp; Wardens (vs bot)</h2>
+        <p>Choisis la difficulté (<b>Easy → Unfair</b>) et un <b>Warden</b> adverse au caractère distinct : <b>The Butcher</b> (assoiffé de kills), <b>The Warden</b> (défensif, thésaurise l'Aegis), <b>The Swarm</b> (invoque sans cesse), ou aléatoire.</p>
+
+        <h2>Styx Hazards (option)</h2>
+        <p>Active-les au menu pour réveiller le terrain vivant : <b>Lave</b> (une pièce qui s'y arrête ou y est poussée meurt), <b>Gouffre</b> (bloque déplacement et ligne de frappe), <b>Fontaine d'âmes</b> (+5 cristaux, ou +1 vie pour la royauté). Les hasards se redéploient tous les 3 rounds. <b>Gambit Shove</b> : le Juggernaut et le Wildrider repoussent d'une case une cible qui survit — idéal pour la jeter dans la lave.</p>
+
+        <h2>Modes solo</h2>
+        <p><b>⚑ Trials</b> — scénarios faits main avec objectifs variés (régicide, survie). <b>☀ Daily Gambit</b> — un défi seedé par la date, identique pour tous, une tentative par jour, avec série (streak) et texte à partager. <b>▼ Chambers of the Descent</b> — un run roguelike de 4 chambres de plus en plus dures ; entre chaque, tu <b>draftes un Boon</b> divin (Charon, Hermès, Hécate, Arès, Nyx) et tu conserves cristaux et boons. <b>🜃 Mirror of Night</b> — dépense les <b>Obols</b> gagnés en run pour des améliorations permanentes.</p>
+
+        <h2>Options (Rites of Access)</h2>
+        <p>Règle la <b>vitesse de bataille</b> (0.5×–2×), active <b>Reduce motion</b> (sans secousses/flash/zoom) et les <b>glyphes daltoniens</b> (▲ Umbra / ▽ Ember). Réglages conservés entre les parties.</p>
+
+        <h2>Astuces</h2>
+        <ul class="help-roles">
+          <li>L'<b>ordre</b> de tes commandes compte : place un kill avant un déplacement pour dégager une ligne.</li>
+          <li>Comme l'initiative alterne, prévois que l'ennemi peut frapper avant toi certains rounds.</li>
+          <li>Garde un Aegis pour ton Sovereign quand il est menacé.</li>
+        </ul>
+      </div>
+
+      <div class="mode-row">
+        <button id="btnHelpClose" class="btn btn-primary">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gameOverScreen" class="overlay hidden">
+    <div class="overlay-inner">
+      <h1 id="winnerHeadline" class="title">VICTORY</h1>
+      <div id="ledger" class="ledger"></div>
+      <div class="mode-row">
+        <button id="btnPlayAgain" class="btn btn-primary">Play Again</button>
+        <button id="btnMainMenu" class="btn btn-ghost">Main Menu</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="game.js"></script>
+<script src="ai.js"></script>
+</body>
+</html>
