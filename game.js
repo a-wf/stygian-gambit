@@ -2188,7 +2188,7 @@
     SG.Net.onOpponentLeft = () => onlineOpponentLeft();
   }
   if (dom.btnOnline) dom.btnOnline.addEventListener("click", openOnline);
-  if (dom.btnOnlineClose) dom.btnOnlineClose.addEventListener("click", () => { if (SG.Net) SG.Net.leave(); dom.onlineScreen.classList.add("hidden"); });
+  if (dom.btnOnlineClose) dom.btnOnlineClose.addEventListener("click", () => { if (SG.Net) SG.Net.leave(); showStart(); });
   if (dom.btnCreateRoom) dom.btnCreateRoom.addEventListener("click", () => {
     audio._ensure();
     if (dom.onlineStatus) dom.onlineStatus.textContent = "Creating room…";
