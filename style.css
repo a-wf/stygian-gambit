@@ -25,7 +25,7 @@ html, body {
   background: radial-gradient(ellipse at 50% -8%, #3a1420 0%, #180810 55%, #050206 100%);
   background-attachment: fixed;
   color: var(--bone);
-  font-family: "Georgia", "Iowan Old Style", serif;
+  font-family: "Georgia", "Iowan Old Style", "Songti SC", "Noto Serif SC", "Noto Naskh Arabic", "Geeza Pro", serif;
   overflow-x: hidden;          /* the page scrolls vertically when the HUD is taller than the window */
 }
 
@@ -88,7 +88,7 @@ html, body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px 18px;
-  text-align: left;
+  text-align: start;
   margin: 0 0 16px;
   font-size: 0.86em;
   line-height: 1.35;
@@ -123,9 +123,9 @@ html, body {
 }
 
 .help-link { margin-top: 14px; font-size: 0.82em; }
-.help-inner { max-width: 760px; text-align: left; }
+.help-inner { max-width: 760px; text-align: start; }
 .help-inner .title, .help-inner .subtitle { text-align: center; }
-.help-body { text-align: left; font-size: 0.9em; line-height: 1.5; color: #d6cadf; }
+.help-body { text-align: start; font-size: 0.9em; line-height: 1.5; color: #d6cadf; }
 .help-body h2 {
   color: var(--gold);
   font-size: 1.02em;
@@ -136,8 +136,12 @@ html, body {
 }
 .help-body p { margin: 4px 0 8px; }
 .help-body b { color: #f0e6d2; }
-.help-roles { margin: 4px 0 8px; padding-left: 18px; }
+.help-roles { margin: 4px 0 8px; padding-inline-start: 18px; }
 .help-roles li { margin-bottom: 4px; }
+.help-roles.with-icons { list-style: none; padding-inline-start: 0; }
+.help-roles.with-icons li { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.role-icon { flex: 0 0 46px; width: 46px; height: 46px; }
+.role-text { flex: 1; min-width: 0; }
 
 .hall-record { margin-top: 14px; font-size: 0.76em; color: #b6a9c6; }
 .hall-record b { color: var(--gold); }
@@ -150,11 +154,11 @@ html, body {
   padding: 3px 6px;
 }
 .ledger-head { color: var(--gold); font-weight: bold; border-bottom: 1px solid rgba(232,198,87,0.28); margin-bottom: 3px; }
-.ledger-head span:first-child { color: var(--umbra-glow); text-align: left; }
-.ledger-head span:last-child { color: var(--ember); text-align: right; }
-.ledger-row span:first-child { text-align: left; color: var(--umbra-glow); }
+.ledger-head span:first-child { color: var(--umbra-glow); text-align: start; }
+.ledger-head span:last-child { color: var(--ember); text-align: end; }
+.ledger-row span:first-child { text-align: start; color: var(--umbra-glow); }
 .ledger-row span:nth-child(2) { text-align: center; color: #c7bcd4; }
-.ledger-row span:last-child { text-align: right; color: var(--ember); }
+.ledger-row span:last-child { text-align: end; color: var(--ember); }
 .ledger-row.score { font-size: 1.05em; font-weight: bold; border-bottom: 1px dashed rgba(232,198,87,0.2); padding-bottom: 5px; margin-bottom: 3px; }
 .ledger-row.score span:nth-child(2) { color: var(--gold); }
 .ledger-best { margin-top: 8px; text-align: center; font-size: 0.9em; color: #c7bcd4; }
@@ -170,7 +174,7 @@ html, body {
   border: 1px solid var(--panel-border); border-radius: 5px; padding: 4px 6px; cursor: pointer;
 }
 
-.trials-list { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 16px; text-align: left; }
+.trials-list { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 16px; text-align: start; }
 .trial-card { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 9px 12px; width: 100%; }
 .trial-card.cleared { border-color: var(--fury); }
 .trial-name { font-size: 0.98em; color: var(--gold); }
@@ -178,12 +182,12 @@ html, body {
 .trial-name em { color: #b9aec2; font-style: italic; font-size: 0.85em; }
 .trial-blurb { font-size: 0.8em; color: #b9aec2; line-height: 1.3; }
 
-.options-body { text-align: left; margin: 10px 0 16px; font-size: 0.9em; color: #d6cadf; }
+.options-body { text-align: start; margin: 10px 0 16px; font-size: 0.9em; color: #d6cadf; }
 .opt-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .opt-row span { flex: 1; }
 .opt-row input[type="range"] { flex: 0 0 160px; accent-color: var(--gold); }
 .opt-row input[type="checkbox"] { accent-color: var(--gold); width: 16px; height: 16px; }
-.opt-row b { color: var(--gold); min-width: 34px; text-align: right; }
+.opt-row b { color: var(--gold); min-width: 34px; text-align: end; }
 .hazard-option b { color: #ff8a5c; }
 
 .online-status { margin: 8px 0 14px; font-size: 0.92em; color: #d6cadf; min-height: 1.2em; }
@@ -314,13 +318,13 @@ html, body {
 #planLabel { color: var(--gold); font-weight: bold; }
 
 .stat-row { font-size: 0.78em; color: #c7bcd4; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
-.side-panel.dark .stat-row { flex-direction: row-reverse; text-align: right; }
+.side-panel.dark .stat-row { flex-direction: row-reverse; text-align: end; }
 .stat-row.muted { color: #8a7f9a; font-size: 0.72em; }
 .aegis { color: var(--gold); letter-spacing: 2px; font-size: 1.05em; }
 .aegis .spent { color: #4a3f52; }
 .aegis .pip.bonus { color: #ffe9a8; text-shadow: 0 0 6px rgba(255,233,168,0.8); }  /* charge from a bonus */
 .aegis .spent.bonus { color: #5a4a3a; }
-.aegis .aegis-count { font-size: 0.72em; letter-spacing: 0; color: #c7bcd4; margin-left: 2px; }
+.aegis .aegis-count { font-size: 0.72em; letter-spacing: 0; color: #c7bcd4; margin-inline-start: 2px; }
 .royal { font-size: 0.82em; letter-spacing: 1px; }
 .royal .king { color: var(--gold); }
 .royal .queen { color: #c98bd1; }
@@ -349,7 +353,7 @@ html, body {
 }
 .side-panel h3 { margin: 0 0 6px; font-size: 0.95em; flex: 0 0 auto; }
 .side-panel.light h3 { color: var(--umbra-glow); }
-.side-panel.dark h3 { color: var(--ember); text-align: right; }
+.side-panel.dark h3 { color: var(--ember); text-align: end; }
 
 .ichor-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .side-panel.dark .ichor-row { flex-direction: row-reverse; }
@@ -412,13 +416,13 @@ html, body {
 
 /* ---------- Choice pop-up (summon, Reaper strike, fresh summon) ---------- */
 .choice-overlay { background: rgba(5, 3, 8, 0.5); z-index: 20; }
-.choice-inner { max-width: 470px; padding: 18px 20px; text-align: left; display: flex; flex-direction: column; max-height: 88vh; overflow: hidden; }
+.choice-inner { max-width: 470px; padding: 18px 20px; text-align: start; display: flex; flex-direction: column; max-height: 88vh; overflow: hidden; }
 .choice-title { margin: 0 0 4px; color: var(--gold); font-size: 1.25em; letter-spacing: 0.06em; text-align: center; }
 .choice-sub { margin: 0 0 14px; font-size: 0.84em; color: #c7bcd4; line-height: 1.45; text-align: center; }
 .choice-sub b { color: #f0e6d2; }
 .choice-options { display: flex; flex-direction: column; gap: 7px; margin-bottom: 12px; overflow-y: auto; min-height: 0; flex: 1 1 auto; padding: 2px; }
 .choice-inner .mode-row { flex: 0 0 auto; margin-bottom: 0; }
-.choice-card { display: flex; align-items: center; gap: 12px; width: 100%; padding: 7px 12px; text-align: left; flex: 0 0 auto; }
+.choice-card { display: flex; align-items: center; gap: 12px; width: 100%; padding: 7px 12px; text-align: start; flex: 0 0 auto; }
 .choice-card:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
 .choice-card:disabled .choice-icon { opacity: 0.4; }
 .choice-icon { flex: 0 0 44px; width: 44px; height: 44px; }
@@ -426,3 +430,20 @@ html, body {
 .choice-label { color: var(--gold); font-size: 1em; }
 .choice-desc { color: #b9aec2; font-size: 0.8em; line-height: 1.35; }
 .choice-badge { flex: 0 0 auto; color: #8fd0ff; font-weight: bold; text-shadow: 0 0 8px rgba(143,208,255,0.4); }
+
+/* ---------- Language support ---------- */
+.lang-row { display: flex; justify-content: flex-end; margin: -10px 0 4px; font-size: 0.78em; color: #b9aec2; }
+.lang-row label { display: flex; align-items: center; gap: 6px; }
+.lang-select {
+  font-family: inherit; font-size: 1em;
+  background: #241a30; color: var(--bone);
+  border: 1px solid var(--panel-border); border-radius: 5px; padding: 3px 6px; cursor: pointer;
+}
+.opt-row .lang-select { flex: 0 0 auto; }
+/* Arabic letters must join: tracking breaks the script, so drop all letter-spacing. */
+html[lang="ar"] *, html[lang="ar"] *::before { letter-spacing: 0 !important; }
+html[lang="ar"] body { line-height: 1.6; }
+/* Chinese reads better without the wide Latin tracking on titles. */
+html[lang^="zh"] .title, html[lang^="zh"] .help-body h2, html[lang^="zh"] .choice-title { letter-spacing: 0.04em; }
+/* Codes and numbers stay left-to-right inside an RTL page. */
+[dir="rtl"] .room-code, [dir="rtl"] .online-code-input { direction: ltr; unicode-bidi: isolate; }

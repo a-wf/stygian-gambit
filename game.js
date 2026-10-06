@@ -249,9 +249,13 @@
   function lerp(a, b, t) { return a + (b - a) * t; }
   function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
   function easeOutBack(t) { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); }
-  function sideLabel(side) { return side === "light" ? "Umbra" : side === "dark" ? "Ember" : "the Underworld"; }
+  // i18n: every visible string goes through t(); dictionaries live in i18n/<lang>.js.
+  function t(key, params) { return SG.I18N ? SG.I18N.t(key, params) : key; }
+  function sideLabel(side) { return t(side === "light" ? "side.light" : side === "dark" ? "side.dark" : "side.neutral"); }
+  function pieceName(type) { return t("piece." + type); }
   function otherSide(side) { return side === "light" ? "dark" : "light"; }
-  function describePiece(p) { return `${sideLabel(p.side)}'s ${PIECE_DEFS[p.type].label}`; }
+  function describePiece(p) { return t("who", { side: sideLabel(p.side), piece: pieceName(p.type) }); }
+  function scenarioName(sc) { const n = t("scenario." + sc.id + ".name"); return sc.daily ? t("daily.name", { name: n }) : n; }
   function hexToRgba(hex, a) {
     const v = hex.replace("#", "");
     const r = parseInt(v.substring(0, 2), 16), g = parseInt(v.substring(2, 4), 16), b = parseInt(v.substring(4, 6), 16);
@@ -296,10 +300,10 @@
   function applyTerrainOnLand(piece, ts) {
     const kind = terrainAt(piece.row, piece.col);
     if (!kind || !piece.alive) return;
-    if (kind === "lava") environmentKill(piece, null, ts, "ENGULFED");
+    if (kind === "lava") environmentKill(piece, null, ts, t("fx.engulfed"));
     else if (kind === "font") {
-      if (piece.maxLives > 1 && piece.lives < piece.maxLives && (piece.side === "light" || piece.side === "dark")) { piece.lives++; spawnDamageText(piece.x, piece.y - 6, "+1 LIFE", "#c98bd1"); syncSidePanels(); }
-      else if (piece.side === "light" || piece.side === "dark") { state.crystals[piece.side] += 5; spawnDamageText(piece.x, piece.y - 6, "+5◆", "#8fd0ff"); syncSidePanels(); }
+      if (piece.maxLives > 1 && piece.lives < piece.maxLives && (piece.side === "light" || piece.side === "dark")) { piece.lives++; spawnDamageText(piece.x, piece.y - 6, t("fx.lifeGained"), "#c98bd1"); syncSidePanels(); }
+      else if (piece.side === "light" || piece.side === "dark") { state.crystals[piece.side] += 5; spawnDamageText(piece.x, piece.y - 6, t("fx.crystals", { n: 5 }), "#8fd0ff"); syncSidePanels(); }
     }
   }
   SG.inBounds = inBounds;
@@ -488,7 +492,7 @@
     }
     const distinct = new Set(arr.map(c => c.pieceId)).size;
     const cap = maxCmdFor(state.planningSide);
-    if (distinct >= cap) { setCaption(`Only ${cap} pieces may act each round.`); return false; }
+    if (distinct >= cap) { setCaption(t("note.maxCmd", { n: cap })); return false; }
     arr.push(cmd);
     state.undoStack.push({ type: "command", pieceId: cmd.pieceId });
     return true;
@@ -501,13 +505,13 @@
       piece.warded = false;
       state.aegis[side] = Math.min(state.aegisMax[side], state.aegis[side] + 1);  // never exceed the match's charges
       state.undoStack.push({ type: "unward", pieceId: piece.id });
-      setCaption(`${describePiece(piece)}'s Aegis is withdrawn.`);
+      setCaption(t("note.unward", { who: describePiece(piece) }));
     } else if (state.aegis[side] > 0) {
       piece.warded = true; state.aegis[side]--;
       bumpStat(side, "aegisUsed"); audio.boon();
       state.undoStack.push({ type: "ward", pieceId: piece.id });
-      setCaption(`${describePiece(piece)} is shielded — it will survive one lethal blow.`);
-    } else setCaption("No Aegis charges remain.");
+      setCaption(t("note.ward", { who: describePiece(piece) }));
+    } else setCaption(t("note.noAegis"));
     syncSidePanels();
   }
 
@@ -521,7 +525,7 @@
       if (p && p.warded) state.aegis[side] = Math.min(state.aegisMax[side], state.aegis[side] + 1);
       state.undoStack = state.undoStack.filter(e => e.pieceId !== a.pieceId);
       removeSummoned(a);
-      setCaption(`Summon undone — ${refundNote(a.cost, pruneStaleMoves(side))}`);
+      setCaption(t("note.summonUndone", { refund: refundNote(a.cost, pruneStaleMoves(side)) }));
     } else if (a.type === "command") {
       state.plan[side] = state.plan[side].filter(c => c.pieceId !== a.pieceId);
     } else if (a.type === "commandEdit") {
@@ -583,9 +587,9 @@
   function showHandoff(nextSide) {
     resetTurnTransients();
     state.scene = "handoff";
-    dom.handoffTitle.textContent = "PASS THE DEVICE";
-    dom.handoffText.textContent = `Hand over to ${sideLabel(nextSide)}. Their plan stays secret.`;
-    dom.btnHandoffReady.textContent = `I am ${sideLabel(nextSide)} — Ready`;
+    dom.handoffTitle.textContent = t("handoff.title");
+    dom.handoffText.textContent = t("handoff.text", { side: sideLabel(nextSide) });
+    dom.btnHandoffReady.textContent = t("handoff.ready", { side: sideLabel(nextSide) });
     dom.handoffScreen.classList.remove("hidden");
     dom.planBar.classList.add("hidden");
     refreshBanner();
@@ -621,7 +625,7 @@
     // Hoarded Souls — interest on banked crystals (capped), a live save-vs-spend choice each round.
     for (const s of ["light", "dark"]) {
       const gain = Math.min(5, Math.floor(state.crystals[s] / 20));
-      if (gain > 0) { state.crystals[s] += gain; logEvent(`${sideLabel(s)} hoards +${gain}◆ of interest from the Styx.`); }
+      if (gain > 0) { state.crystals[s] += gain; logEvent(t("log.interest", { side: sideLabel(s), gain })); }
     }
     clearSelection();
     if (!state.isReplay) { state.history.push(snapshotState()); if (state.history.length > 14) state.history.shift(); }
@@ -662,7 +666,7 @@
     // Furies act last, after both houses' commands.
     if (state.furiesEnabled) for (const f of state.pieces) if (f.alive && f.type === "fury") queue.push({ fury: f.id });
     state.battle = { queue, index: -1, stepAt: ts + BATTLE_START_DELAY };
-    setCaption(`Battle joined — ${sideLabel(fs)} strikes first.`);
+    setCaption(t("cap.battleJoined", { side: sideLabel(fs) }));
     if (!queue.length) state.battle.stepAt = ts + 200; // both passed
   }
 
@@ -706,7 +710,7 @@
   function resolveCommand(side, cmd, ts) {
     const piece = pieceById(cmd.pieceId);
     if (!piece || !piece.alive) {
-      setCaption(`${sideLabel(side)}'s order dies with its bearer.`);
+      setCaption(t("cap.orderDies", { side: sideLabel(side) }));
       return;
     }
     if (cmd.kind === "move") resolveMove(piece, cmd, ts);
@@ -719,12 +723,12 @@
       getMoveTiles(piece, grid).some(t => t.row === cmd.row && t.col === cmd.col);
     if (legal) {
       startDash(piece, cmd.row, cmd.col, ts, { kind: PIECE_DEFS[piece.type].moveKind === "tether" ? "tether" : "move" });
-      setCaption(`${describePiece(piece)} advances.`);
+      setCaption(t("cap.advances", { who: describePiece(piece) }));
       applyTerrainOnLand(piece, ts);
     } else {
       state.shake = Math.min(6, state.shake + 2);
       spawnDustPuff(piece.x, piece.y, piece.side, 6);
-      setCaption(`${describePiece(piece)}'s path is blocked.`);
+      setCaption(t("cap.blocked", { who: describePiece(piece) }));
     }
   }
 
@@ -749,11 +753,11 @@
         spawnShockwave(piece.x, piece.y, glyphColor(piece.side).glow, ts, { maxRadius: 62, durationMs: 440 });
         state.shake = Math.min(10, state.shake + 4);
         state.flash = Math.min(1, state.flash + 0.2);
-        setCaption(`${describePiece(piece)} unleashes a Reaping Spiral!`);
+        setCaption(t("cap.spiral", { who: describePiece(piece) }));
         bumpStat(piece.side, "spirals");
         for (const o of foes) { spawnSlash(piece, o, ts, "big"); strikeKill(o, piece, ts); }
       } else {
-        setCaption(`${describePiece(piece)} sweeps her scythe through empty air.`);
+        setCaption(t("cap.spiralMiss", { who: describePiece(piece) }));
       }
       return;
     }
@@ -768,9 +772,9 @@
 
     if (!inRange) {
       spawnSlash(piece, { x: aimX, y: aimY }, ts, "normal");
-      spawnDamageText(aimX, aimY, "SHADOW", "#9a8fb0");
+      spawnDamageText(aimX, aimY, t("fx.shadow"), "#9a8fb0");
       audio.dash();
-      setCaption(`${describePiece(piece)} strikes only shadow.`);
+      setCaption(t("cap.whiff", { who: describePiece(piece) }));
       return;
     }
 
@@ -779,7 +783,7 @@
     else spawnSlash(piece, target, ts, "big");
     state.shake = Math.min(9, state.shake + 3);
     state.flash = Math.min(1, state.flash + 0.18);
-    setCaption(`${describePiece(piece)} strikes a killing blow!`);
+    setCaption(t("cap.kill", { who: describePiece(piece) }));
     const outcome = strikeKill(target, piece, ts);
 
     // Gambit Shove — Juggernaut & Wildrider knock back a royal that SURVIVED on its lives.
@@ -790,8 +794,8 @@
       const g = buildOccupancyGrid(state.pieces);
       if ((dr || dc) && inBounds(nr, nc) && !g[nr][nc] && terrainAt(nr, nc) !== "chasm") {
         startDash(target, nr, nc, ts, { kind: "move" });
-        if (terrainAt(nr, nc) === "lava") environmentKill(target, piece.side, ts, "SHOVED → LAVA");
-        else spawnDamageText(target.x, target.y - 6, "SHOVED", "#c7bcd4");
+        if (terrainAt(nr, nc) === "lava") environmentKill(target, piece.side, ts, t("fx.shovedLava"));
+        else spawnDamageText(target.x, target.y - 6, t("fx.shoved"), "#c7bcd4");
       }
     }
 
@@ -823,10 +827,10 @@
       state.flash = Math.min(1, state.flash + 0.25);
       state.shake = Math.min(8, state.shake + 3);
       state.pendingBeat = Math.max(state.pendingBeat || 0, 120);
-      spawnDamageText(target.x, target.y - 6, "AEGIS ✦", "#e8c657");
+      spawnDamageText(target.x, target.y - 6, t("fx.aegis"), "#e8c657");
       bumpStat(target.side, "aegisBroken");
       audio.special();
-      logEvent(`${describePiece(target)}'s Aegis shatters the blow!`);
+      logEvent(t("log.aegisBlock", { who: describePiece(target) }));
       syncSidePanels();
       return "blocked";
     }
@@ -842,9 +846,9 @@
       state.shake = Math.min(9, state.shake + 3);
       state.pendingBeat = Math.max(state.pendingBeat || 0, 120);
       triggerZoom(target.x, target.y, 0.06);
-      spawnDamageText(target.x, target.y - 6, "-1 LIFE", "#c98bd1");
+      spawnDamageText(target.x, target.y - 6, t("fx.lifeLost"), "#c98bd1");
       audio.hit();
-      logEvent(`${describePiece(target)} reels — ${target.lives} ${target.lives === 1 ? "life" : "lives"} remain.`);
+      logEvent(t(target.lives === 1 ? "log.reels1" : "log.reelsN", { who: describePiece(target), n: target.lives }));
     }
     syncSidePanels();
     return outcome;
@@ -857,10 +861,10 @@
       piece.warded = false;
       piece.hitFlashUntil = ts + 240;
       spawnShockwave(piece.x, piece.y, "#e8c657", ts, { maxRadius: 54, durationMs: 440 });
-      spawnDamageText(piece.x, piece.y - 6, "AEGIS ✦", "#e8c657");
+      spawnDamageText(piece.x, piece.y - 6, t("fx.aegis"), "#e8c657");
       bumpStat(piece.side, "aegisBroken");
       audio.special();
-      logEvent(`${describePiece(piece)}'s Aegis holds back the abyss!`);
+      logEvent(t("log.aegisAbyss", { who: describePiece(piece) }));
       syncSidePanels();
       return false;
     }
@@ -881,22 +885,22 @@
     state.flash = Math.min(1, state.flash + (royal ? 0.34 : 0.2));
     state.pendingBeat = Math.max(state.pendingBeat || 0, royal ? 300 : 140);
     triggerZoom(target.x, target.y, royal ? 0.16 : 0.07);
-    spawnDamageText(target.x, target.y - 8, "SLAIN", "#ff6a6a");
+    spawnDamageText(target.x, target.y - 8, t("fx.slain"), "#ff6a6a");
     audio.death();
-    logEvent(`${describePiece(target)} is slain${killerSide ? ` by ${sideLabel(killerSide)}` : ""}.`);
+    logEvent(killerSide ? t("log.slainBy", { who: describePiece(target), side: sideLabel(killerSide) }) : t("log.slain", { who: describePiece(target) }));
     bumpStat(killerSide, "kills");
     bumpStat(target.side, "losses");
     if (killerSide === "light" || killerSide === "dark") {
       const gain = crystalsPerKill(killerSide);
       state.crystals[killerSide] += gain;
-      spawnDamageText(target.x + 18, target.y + 12, "+" + gain + "◆", "#8fd0ff");
+      spawnDamageText(target.x + 18, target.y + 12, t("fx.crystals", { n: gain }), "#8fd0ff");
       state.combo[killerSide] = (state.combo[killerSide] || 0) + 1;
       const chain = state.combo[killerSide];
       if (!state.isReplay) state.stats[killerSide].bestCombo = Math.max(state.stats[killerSide].bestCombo, chain);
       if (chain >= 2) {
         const bonus = 5 * (chain - 1);
         state.crystals[killerSide] += bonus;
-        spawnDamageText(BOARD_PX / 2, BOARD_PX * 0.26, `${chain} SOULS · +${bonus}◆`, "#e8c657", true);
+        spawnDamageText(BOARD_PX / 2, BOARD_PX * 0.26, t("fx.souls", { n: chain, bonus }), "#e8c657", true);
         state.shake = Math.min(15, state.shake + chain);
         state.flash = Math.min(1, state.flash + 0.04 * chain);
         audio.combo(chain);
@@ -938,7 +942,7 @@
     }
     const furyEvery = (state.scenario && state.scenario.furyEvery) || 6;
     if (state.furiesEnabled && state.roundNumber % furyEvery === 0 && state.furyCount < FURY_MAX) spawnFury(ts);
-    if (state.hazardsEnabled && state.roundNumber % 3 === 0) { genTerrain(); logEvent("The underworld shifts — the hazards move."); }
+    if (state.hazardsEnabled && state.roundNumber % 3 === 0) { genTerrain(); logEvent(t("log.hazardShift")); }
     beginPlanningPhase();
   }
 
@@ -977,7 +981,7 @@
   function startChamber() {
     const cfg = CHAMBERS[runState.chamber];
     startMatch("bot", "dark", cfg.hazards, { run: runState, difficulty: cfg.difficulty, persona: cfg.persona, hazards: cfg.hazards });
-    logEvent(`Chamber ${runState.chamber + 1}/${CHAMBERS.length}: ${cfg.name}${cfg.boss ? " — BOSS SHADE" : ""}.`);
+    logEvent(t(cfg.boss ? "log.chamberBoss" : "log.chamber", { n: runState.chamber + 1, total: CHAMBERS.length, name: t("chamber." + runState.chamber) }));
   }
   function grantBotBoon(run) {
     const owned = run.botBoons || (run.botBoons = {});
@@ -1014,12 +1018,12 @@
     offer.forEach(b => {
       const card = document.createElement("button");
       card.className = "trial-card btn btn-ghost";
-      card.innerHTML = `<span class="trial-name">${b.name}</span><span class="trial-blurb">${b.desc}</span>`;
+      card.innerHTML = `<span class="trial-name">${t("boon." + b.id + ".name")}</span><span class="trial-blurb">${t("boon." + b.id + ".desc")}</span>`;
       card.addEventListener("click", () => { run.boons[b.id] = true; dom.boonScreen.classList.add("hidden"); startChamber(); });
       dom.boonList.appendChild(card);
     });
     dom.hud.classList.add("hidden");
-    if (dom.boonTitle) dom.boonTitle.textContent = `CHAMBER CLEARED — CHOOSE A BOON (${run.chamber}/${CHAMBERS.length})`;
+    if (dom.boonTitle) dom.boonTitle.textContent = t("boon.titleRun", { n: run.chamber, total: CHAMBERS.length });
     dom.boonScreen.classList.remove("hidden");
   }
 
@@ -1055,8 +1059,8 @@
     state.pieces = buildStartingPieces();
     state.lastTs = performance.now();
     dom.eventLog.innerHTML = "";
-    logEvent(`Online duel — you command ${sideLabel(mySide)}.`);
-    if (state.furiesEnabled) { spawnFury(state.lastTs); logEvent("Furies stalk this duel."); }
+    logEvent(t("log.online", { side: sideLabel(mySide) }));
+    if (state.furiesEnabled) { spawnFury(state.lastTs); logEvent(t("log.furiesOnline")); }
     if (dom.onlineScreen) dom.onlineScreen.classList.add("hidden");
     dom.startScreen.classList.add("hidden");
     dom.gameOverScreen.classList.add("hidden");
@@ -1099,7 +1103,7 @@
     if (state.mode !== "online") return;
     closeChoice();
     state.onlineWaiting = false;
-    if (dom.onlineStatus) dom.onlineStatus.innerHTML = "<b>Opponent disconnected.</b> The duel cannot continue.";
+    if (dom.onlineStatus) dom.onlineStatus.innerHTML = t("online.left");
     if (dom.onlineSetup) dom.onlineSetup.classList.remove("hidden");
     dom.hud.classList.add("hidden");
     if (dom.onlineScreen) dom.onlineScreen.classList.remove("hidden");
@@ -1116,7 +1120,6 @@
     const mods = ["extra-furies", "bonus-crystals", "prewarded"];
     const mod = mods[Math.floor(rng() * mods.length)];
     const sc = JSON.parse(JSON.stringify(base));
-    sc.name = `Daily · ${base.name}`;
     sc.daily = true; sc.dailyMod = mod;
     if (mod === "extra-furies") { sc.furies = true; sc.furyEvery = 3; }
     if (mod === "bonus-crystals") { sc.crystals = { light: (sc.crystals && sc.crystals.light) || 0, dark: ((sc.crystals && sc.crystals.dark) || 0) + 20 }; }
@@ -1134,7 +1137,8 @@
     d.lastWon = won; d.lastRounds = state.roundNumber + 1;
     saveStore("sg.daily", d);
     const rds = state.roundNumber + 1;
-    state.dailyShare = `⚔ Stygian Gambit — Daily ${key.slice(5)} · ${won ? "cleared in " + rds + " round" + (rds === 1 ? "" : "s") : "fell"} · streak ${d.streak}`;
+    const result = won ? t(rds === 1 ? "daily.cleared1" : "daily.clearedN", { n: rds }) : t("daily.fell");
+    state.dailyShare = t("daily.share", { date: key.slice(5), result, streak: d.streak });
   }
 
   /* ============================================================
@@ -1188,10 +1192,10 @@
     state.pieces.push(p);
     spawnBurstParticles(p.x, p.y, side, 24);
     spawnShockwave(p.x, p.y, glyphColor(side).glow, state.lastTs, { maxRadius: 54, durationMs: 470 });
-    spawnDamageText(p.x, p.y - 6, "RISEN", glyphColor(side).glow);
+    spawnDamageText(p.x, p.y - 6, t("fx.risen"), glyphColor(side).glow);
     bumpStat(side, "summons");
     audio.special();
-    logEvent(`${sideLabel(side)} summons a ${PIECE_DEFS[type].label} from the abyss.`);
+    logEvent(t("log.summon", { side: sideLabel(side), piece: pieceName(type) }));
     syncSidePanels();
     return p;
   }
@@ -1213,7 +1217,7 @@
     spawnBurstParticles(p.x, p.y, "neutral", 24);
     spawnShockwave(p.x, p.y, "#5be07a", state.lastTs || ts, { maxRadius: 56, durationMs: 480 });
     audio.special();
-    logEvent("A Fury claws its way up from the deep to hunt the living.");
+    logEvent(t("log.furyRise"));
   }
 
   function resolveFury(fury, ts) {
@@ -1228,7 +1232,7 @@
       fury.lunge = { fromX: fury.x, fromY: fury.y, targetX: target.x, targetY: target.y, startTs: ts, hitTs: ts, windupMs: 1, recoverMs: 250 };
       spawnSlash(fury, target, ts, "normal");
       state.shake = Math.min(9, state.shake + 3);
-      setCaption(`A Fury tears into ${describePiece(target)}!`);
+      setCaption(t("cap.furyStrike", { who: describePiece(target) }));
       strikeKill(target, fury, ts);
     } else {
       let moved = false;
@@ -1241,7 +1245,7 @@
         }
       }
       if (moved) applyTerrainOnLand(fury, ts);
-      setCaption(moved ? "A Fury prowls closer…" : "A Fury snarls, hemmed in.");
+      setCaption(t(moved ? "cap.furyMove" : "cap.furyStuck"));
     }
   }
 
@@ -2009,13 +2013,13 @@
   function refreshBanner() {
     if (!dom.turnBanner) return;
     let txt = "", note = false;
-    const chamber = state.run && state.run.active ? `${CHAMBERS[state.run.chamber].name} (${state.run.chamber + 1}/${CHAMBERS.length}) · ` : "";
-    if (state.scene === "planning" && state.mode === "online" && state.onlineWaiting) txt = "⏳ Plan committed — waiting for your opponent…";
+    const chamber = state.run && state.run.active ? t("banner.chamber", { name: t("chamber." + state.run.chamber), n: state.run.chamber + 1, total: CHAMBERS.length }) : "";
+    if (state.scene === "planning" && state.mode === "online" && state.onlineWaiting) txt = t("banner.waiting");
     else if (state.scene === "planning" && state.planNote && performance.now() < (state.planNoteUntil || 0)) { txt = state.planNote; note = true; }
-    else if (state.scene === "planning" && state.summonArmed) { txt = `Place your ${PIECE_DEFS[state.summonArmed].label} on a highlighted tile · click elsewhere to cancel`; note = true; }
-    else if (state.scene === "planning") txt = `${chamber}${sideLabel(state.planningSide)} — plan in secret · Round ${state.roundNumber + 1} · ${sideLabel(state.firstSide)} resolves first`;
-    else if (state.scene === "battle") txt = (state.isReplay ? "↻ REPLAY · " : "") + (state.caption || "Battle!");
-    else if (state.scene === "handoff") txt = "Pass the device…";
+    else if (state.scene === "planning" && state.summonArmed) { txt = t("banner.placing", { piece: pieceName(state.summonArmed) }); note = true; }
+    else if (state.scene === "planning") txt = t("banner.planning", { chamber, side: sideLabel(state.planningSide), round: state.roundNumber + 1, first: sideLabel(state.firstSide) });
+    else if (state.scene === "battle") txt = (state.isReplay ? t("banner.replay") : "") + (state.caption || t("banner.battle"));
+    else if (state.scene === "handoff") txt = t("banner.handoff");
     dom.turnBanner.textContent = txt;
     dom.turnBanner.classList.toggle("note", note);
     dom.turnBanner.classList.toggle("side-light", state.planningSide === "light");
@@ -2080,7 +2084,7 @@
       b.addEventListener("click", () => { closeChoice(); o.onPick(); });
       dom.choiceOptions.appendChild(b);
     }
-    dom.choiceCancel.textContent = opts.cancelLabel || "Cancel";
+    dom.choiceCancel.textContent = opts.cancelLabel || t("choice.cancel");
     choiceCancelFn = opts.onCancel || null;
     dom.choiceScreen.classList.remove("hidden");
     if (dom.hud) dom.hud.inert = true;             // board + plan bar unreachable (mouse and keyboard) while choosing
@@ -2095,22 +2099,14 @@
   }
   function cancelChoice() { const fn = choiceCancelFn; closeChoice(); if (fn) fn(); }
 
-  const SUMMON_DESC = {
-    skirmisher: "Steps forward, kills on the forward diagonals.",
-    juggernaut: "Lances any foe down a straight line.",
-    wildrider: "Knight's leap over blockers; slays an adjacent foe.",
-    trickster: "Glides any distance along the diagonals and strikes down them.",
-    harrower: "Teleports beside an ally; its kill drags down a second foe.",
-  };
   function openSummonChoice() {
     const side = state.planningSide, have = state.crystals[side];
     const room = homeTilesFor(side).length > 0;
     openChoice({
-      title: "Summon a reinforcement",
-      sub: `You have <b>${have}◆</b>. ${room ? "Pick one, then click an empty highlighted tile in your half." : "<b>No empty tile left in your half.</b>"}`
-        + ` Until you validate, click a fresh summon to cancel it and get the crystals back.`,
+      title: t("summon.title"),
+      sub: t(room ? "summon.sub" : "summon.subNoRoom", { have }),
       options: SUMMON_OPTIONS.map(o => ({
-        icon: { type: o.type, side }, label: o.label, desc: SUMMON_DESC[o.type], badge: `${o.cost}◆`,
+        icon: { type: o.type, side }, label: pieceName(o.type), desc: t("summon.desc." + o.type), badge: `${o.cost}◆`,
         disabled: !room || have < o.cost,
         onPick: () => { state.summonArmed = o.type; clearSelection(); updatePlanBar(); },
       })),
@@ -2123,14 +2119,14 @@
     const radius = hasBoon(reaper.side, "ares") ? 2 : 1;
     const inReach = state.pieces.filter(o => o.alive && o.side !== reaper.side && chebyshev(reaper, o) <= radius).length;
     openChoice({
-      title: "The Reaper's strike",
-      sub: `Target: <b>${describePiece(target)}</b>. Allies are never hit.`,
+      title: t("reaper.title"),
+      sub: t("reaper.sub", { target: describePiece(target) }),
       options: [
-        { icon: { type: "reaper", side: reaper.side }, label: "Reaping Spiral",
-          desc: `Hold her ground and slay every foe ${radius === 2 ? "within 2 tiles" : "adjacent to her"} when she acts — ${inReach} in reach right now.`,
+        { icon: { type: "reaper", side: reaper.side }, label: t("reaper.spiral"),
+          desc: t(radius === 2 ? "reaper.spiralDesc2" : "reaper.spiralDesc", { n: inReach }),
           onPick: () => commitReaperStrike("spiral") },
-        { icon: { type: target.type, side: target.side }, label: "Slay & Advance",
-          desc: `Kill the ${PIECE_DEFS[target.type].label} and step onto its square.`,
+        { icon: { type: target.type, side: target.side }, label: t("reaper.advance"),
+          desc: t("reaper.advanceDesc", { piece: pieceName(target.type) }),
           onPick: () => commitReaperStrike("advance") },
       ],
       onCancel: () => cancelReaperChoice(),
@@ -2139,19 +2135,18 @@
   function summonedThisTurn(p) { return !!p && state.undoStack.some(a => a.type === "summon" && a.pieceId === p.id); }
   function openSummonedChoice(p) {
     const entry = state.undoStack.find(a => a.type === "summon" && a.pieceId === p.id);
-    const label = PIECE_DEFS[p.type].label;
+    const label = pieceName(p.type);
     const canOrder = state.mode !== "online";
     const options = [{
-      icon: { type: p.type, side: p.side }, label: "Cancel this summon",
-      desc: `Remove the ${label} and refund ${entry ? entry.cost : 0}◆${p.warded ? " plus its Aegis" : ""}.`,
+      icon: { type: p.type, side: p.side }, label: t("fresh.cancel"),
+      desc: t(p.warded ? "fresh.cancelDescAegis" : "fresh.cancelDesc", { piece: label, cost: entry ? entry.cost : 0 }),
       onPick: () => cancelSummon(p.id),
     }];
-    if (canOrder) options.push({ label: "Give it an order", desc: "Select it to move or strike this round.", onPick: () => selectPiece(p) });
+    if (canOrder) options.push({ label: t("fresh.order"), desc: t("fresh.orderDesc"), onPick: () => selectPiece(p) });
     openChoice({
-      title: `Fresh ${label}`,
-      sub: canOrder ? "Summoned this turn — nothing is final until you validate."
-                    : "Summoned this turn. Online, a new piece can only act from next round.",
-      options, cancelLabel: "Keep it",
+      title: t("fresh.title", { piece: label }),
+      sub: t(canOrder ? "fresh.sub" : "fresh.subOnline"),
+      options, cancelLabel: t("choice.keep"),
     });
   }
   // Take back a summon placed this turn (any order, not only the latest action).
@@ -2177,7 +2172,7 @@
     return stale.size;
   }
   function refundNote(cost, dropped) {
-    return `${cost}◆ refunded${dropped ? ` · ${dropped} order${dropped > 1 ? "s" : ""} that needed it removed` : ""}.`;
+    return t(!dropped ? "note.refund" : dropped === 1 ? "note.refundDropped1" : "note.refundDroppedN", { cost, n: dropped });
   }
   function cancelSummon(pieceId) {
     const side = state.planningSide;
@@ -2190,7 +2185,7 @@
     }
     state.undoStack = state.undoStack.filter(a => a.pieceId !== pieceId);   // its ward / order entries go too
     removeSummoned(entry);
-    setCaption(`Summon cancelled — ${refundNote(entry.cost, pruneStaleMoves(side))}`);
+    setCaption(t("note.summonCancelled", { refund: refundNote(entry.cost, pruneStaleMoves(side)) }));
     clearSelection(); syncSidePanels(); updatePlanBar();
   }
 
@@ -2200,19 +2195,19 @@
     dom.planBar.classList.remove("hidden");
     const side = state.planningSide;
     const used = new Set(state.plan[side].map(c => c.pieceId)).size;
-    dom.planLabel.textContent = `${sideLabel(side)}: ${used}/${maxCmdFor(side)} commands · Aegis ${state.aegis[side]}/${state.aegisMax[side]} · ${state.crystals[side]}◆`;
-    dom.btnWard.textContent = state.wardMode ? "Ward: On" : "Ward: Off";
+    dom.planLabel.textContent = t("plan.label", { side: sideLabel(side), used, max: maxCmdFor(side), aegis: state.aegis[side], aegisMax: state.aegisMax[side], crystals: state.crystals[side] });
+    dom.btnWard.textContent = t(state.wardMode ? "btn.wardOn" : "btn.wardOff");
     dom.btnWard.classList.toggle("ward-on", state.wardMode);
     const canAct = !(state.mode === "bot" && state.planningSide !== state.humanSide);
     if (dom.btnReplay) dom.btnReplay.disabled = !state.lastBattle || !canAct;
     if (dom.btnRevert) {
       dom.btnRevert.disabled = state.history.length < 2 || !canAct || state.mode === "online";
-      dom.btnRevert.title = state.mode === "online" ? "Not available online — both players share one timeline" : "Undo the last resolved round";
+      dom.btnRevert.title = t(state.mode === "online" ? "title.revertOnline" : "title.revert");
     }
-    if (dom.btnThreat) { dom.btnThreat.textContent = state.showThreat ? "Doom Sight: On" : "Doom Sight: Off"; dom.btnThreat.classList.toggle("ward-on", state.showThreat); }
-    if (dom.btnForesight) { dom.btnForesight.textContent = state.foresightOn ? "Foresight: On" : "Foresight: Off"; dom.btnForesight.classList.toggle("ward-on", state.foresightOn); }
+    if (dom.btnThreat) { dom.btnThreat.textContent = t(state.showThreat ? "btn.threatOn" : "btn.threatOff"); dom.btnThreat.classList.toggle("ward-on", state.showThreat); }
+    if (dom.btnForesight) { dom.btnForesight.textContent = t(state.foresightOn ? "btn.foresightOn" : "btn.foresightOff"); dom.btnForesight.classList.toggle("ward-on", state.foresightOn); }
     dom.btnSummon.classList.toggle("ward-on", !!state.summonArmed);
-    dom.btnSummon.textContent = state.summonArmed ? `Placing ${PIECE_DEFS[state.summonArmed].label}…` : "Summon…";
+    dom.btnSummon.textContent = state.summonArmed ? t("btn.placing", { piece: pieceName(state.summonArmed) }) : t("btn.summon");
     refreshBanner();
   }
 
@@ -2222,7 +2217,7 @@
     if (state.mode === "bot" && state.planningSide !== state.humanSide) return;
     state.replayReturn = snapshotState();
     state.replayReturnPlan = JSON.parse(JSON.stringify(state.plan));
-    logEvent("↻ Replaying the last clash…");
+    logEvent(t("log.replay"));
     loadSnapshotPieces(state.lastBattle.fromSnapshot);
     state.plan = JSON.parse(JSON.stringify(state.lastBattle.plans));
     state.firstSide = state.lastBattle.firstSide;
@@ -2238,7 +2233,7 @@
     if (state.scene !== "planning") return;
     if (state.mode === "online") return;   // a one-sided rewind would desync the two boards
     if (state.mode === "bot" && state.planningSide !== state.humanSide) return;
-    if (state.history.length < 2) { setCaption("The abyss remembers no earlier round."); refreshBanner(); return; }
+    if (state.history.length < 2) { setCaption(t("note.noEarlierRound")); refreshBanner(); return; }
     state.history.pop();                                    // discard this round's start
     const prev = state.history[state.history.length - 1];   // restore the previous round's start
     loadSnapshotPieces(prev);
@@ -2252,7 +2247,7 @@
     state.scene = "planning";
     state.planningSide = state.mode === "bot" ? state.humanSide : "light";
     clearSelection();
-    logEvent("↺ Time unravels — the last round is undone.");
+    logEvent(t("log.revert"));
     refreshBanner(); updatePlanBar(); syncSidePanels();
   }
 
@@ -2343,7 +2338,7 @@
   // Clicking one of your pieces: a piece summoned this turn offers to cancel the summon; others get selected.
   function pickOwnPiece(p) {
     if (summonedThisTurn(p)) { openSummonedChoice(p); return; }
-    if (!onlineSelectable(p)) { setCaption("A summoned piece must wait a round before it can act."); return; }
+    if (!onlineSelectable(p)) { setCaption(t("note.summonWait")); return; }
     selectPiece(p);
   }
 
@@ -2366,7 +2361,28 @@
   if (dom.btnRevert) dom.btnRevert.addEventListener("click", () => revertRound());
   if (dom.btnThreat) dom.btnThreat.addEventListener("click", () => { if (state.scene !== "planning") return; state.showThreat = !state.showThreat; updatePlanBar(); });
   if (dom.btnForesight) dom.btnForesight.addEventListener("click", () => { if (state.scene !== "planning") return; state.foresightOn = !state.foresightOn; updatePlanBar(); });
-  function openHelp() { dom.helpScreen.classList.remove("hidden"); }
+  // Put each piece's figurine in front of its line in the help's role list, so roles can be told apart.
+  // A line is matched by its bold piece name (in the current language), falling back to list order.
+  const ROLE_ORDER = ["sovereign", "reaper", "juggernaut", "trickster", "wildrider", "skirmisher", "harrower", "fury"];
+  function decorateHelpRoles() {
+    const list = dom.helpScreen && dom.helpScreen.querySelector(".help-body ul.help-roles");
+    if (!list) return;
+    list.classList.add("with-icons");
+    [...list.children].forEach((li, i) => {
+      if (li.querySelector("canvas.role-icon")) return;
+      const name = ((li.querySelector("b") || {}).textContent || "").trim();
+      const type = ROLE_ORDER.find(tp => pieceName(tp) === name) || ROLE_ORDER[i];
+      if (!type) return;
+      const text = document.createElement("span");
+      text.className = "role-text";
+      while (li.firstChild) text.appendChild(li.firstChild);   // keep the line as one block beside the icon
+      const cv = document.createElement("canvas");
+      cv.width = 52; cv.height = 52; cv.className = "role-icon";
+      paintIcon(cv, type, type === "fury" ? "neutral" : "light");
+      li.append(cv, text);
+    });
+  }
+  function openHelp() { decorateHelpRoles(); dom.helpScreen.classList.remove("hidden"); }
   function closeHelp() { dom.helpScreen.classList.add("hidden"); }
   if (dom.btnHelp) dom.btnHelp.addEventListener("click", openHelp);
   if (dom.btnHelpGame) dom.btnHelpGame.addEventListener("click", openHelp);
@@ -2380,7 +2396,7 @@
       const done = !!cleared[sc.id];
       const card = document.createElement("button");
       card.className = "trial-card btn btn-ghost" + (done ? " cleared" : "");
-      card.innerHTML = `<span class="trial-name">${done ? "✓ " : ""}${sc.name} <em>· ${sc.difficulty}</em></span><span class="trial-blurb">${sc.blurb}</span>`;
+      card.innerHTML = `<span class="trial-name">${done ? "✓ " : ""}${scenarioName(sc)} <em>· ${t("difficulty." + sc.difficulty)}</em></span><span class="trial-blurb">${t("scenario." + sc.id + ".blurb")}</span>`;
       card.addEventListener("click", () => { dom.trialsScreen.classList.add("hidden"); startTrial(sc); });
       dom.trialsList.appendChild(card);
     });
@@ -2418,8 +2434,8 @@
 
   /* ---- Descent + Mirror UI ---- */
   const MIRROR_UPG = {
-    aegis: { name: "Aegis of Night", max: 2, desc: "+1 starting Aegis charge", cost: lv => 20 + lv * 20 },
-    crystal: { name: "Coffer of Souls", max: 3, desc: "+5 starting crystals", cost: lv => 15 + lv * 15 },
+    aegis: { max: 2, cost: lv => 20 + lv * 20 },
+    crystal: { max: 3, cost: lv => 15 + lv * 15 },
   };
   function refreshMirror() {
     const m = loadStore("sg.mirror", { obols: 0 });
@@ -2430,7 +2446,8 @@
       const u = MIRROR_UPG[key], lv = m[key + "Lv"] || 0, maxed = lv >= u.max, cost = u.cost(lv);
       const btn = document.createElement("button");
       btn.className = "trial-card btn btn-ghost";
-      btn.innerHTML = `<span class="trial-name">${u.name} · Lv ${lv}/${u.max}</span><span class="trial-blurb">${u.desc} — ${maxed ? "MAXED" : cost + " obols"}</span>`;
+      const desc = t("mirror." + key + ".desc");
+      btn.innerHTML = `<span class="trial-name">${t("mirror.level", { name: t("mirror." + key + ".name"), lv, max: u.max })}</span><span class="trial-blurb">${maxed ? t("mirror.maxed", { desc }) : t("mirror.cost", { desc, cost })}</span>`;
       btn.disabled = maxed || (m.obols || 0) < cost;
       btn.addEventListener("click", () => buyMirror(key));
       dom.mirrorUpgrades.appendChild(btn);
@@ -2447,6 +2464,13 @@
   if (dom.btnDescend) dom.btnDescend.addEventListener("click", () => startDescent());
 
   /* ---- Online Duel wiring ---- */
+  // net.js reports i18n keys ("net.*"); anything else is a raw SDK message shown as-is.
+  function showNetError(err) {
+    const b = document.createElement("b");
+    b.style.color = "var(--ember)";
+    b.textContent = /^net\./.test(err) ? t(err) : err;
+    dom.onlineStatus.innerHTML = ""; dom.onlineStatus.appendChild(b);
+  }
   function openOnline() {
     if (dom.onlineSetup) dom.onlineSetup.classList.remove("hidden");
     if (dom.onlineStatus) dom.onlineStatus.innerHTML = "";
@@ -2465,19 +2489,19 @@
   if (dom.btnOnlineClose) dom.btnOnlineClose.addEventListener("click", () => { if (SG.Net) SG.Net.leave(); showStart(); });
   if (dom.btnCreateRoom) dom.btnCreateRoom.addEventListener("click", () => {
     audio._ensure();
-    if (dom.onlineStatus) dom.onlineStatus.textContent = "Creating room…";
+    if (dom.onlineStatus) dom.onlineStatus.textContent = t("online.creating");
     SG.Net.createRoom({ furies: dom.onlineFury && dom.onlineFury.checked }, (err, res) => {
-      if (err) { dom.onlineStatus.innerHTML = `<b style="color:var(--ember)">${err}</b>`; return; }
+      if (err) { showNetError(err); return; }
       if (dom.onlineSetup) dom.onlineSetup.classList.add("hidden");
-      dom.onlineStatus.innerHTML = `Your room code:<br><span class="room-code">${res.code}</span><br>Share it, then wait for your opponent to join…`;
+      dom.onlineStatus.innerHTML = `${t("online.codeLabel")}<br><span class="room-code" dir="ltr">${res.code}</span><br>${t("online.codeWait")}`;
     });
   });
   if (dom.btnJoinRoom) dom.btnJoinRoom.addEventListener("click", () => {
     audio._ensure();
     const codeVal = dom.joinCode ? dom.joinCode.value : "";
-    if (dom.onlineStatus) dom.onlineStatus.textContent = "Joining…";
+    if (dom.onlineStatus) dom.onlineStatus.textContent = t("online.joining");
     SG.Net.joinRoom(codeVal, (err) => {
-      if (err) { dom.onlineStatus.innerHTML = `<b style="color:var(--ember)">${err}</b>`; return; }
+      if (err) { showNetError(err); return; }
       // onStart fires from the SDK callback and launches the match
     });
   });
@@ -2496,7 +2520,7 @@
   });
   dom.btnValidate.addEventListener("click", () => onValidate());
   dom.btnHandoffReady.addEventListener("click", () => onHandoffReady());
-  dom.btnMute.addEventListener("click", () => { audio.setMuted(!audio.muted); dom.btnMute.textContent = audio.muted ? "Unmute" : "Mute"; });
+  dom.btnMute.addEventListener("click", () => { audio.setMuted(!audio.muted); dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute"); });
   dom.btnQuit.addEventListener("click", () => showStart());
   dom.btnMainMenu.addEventListener("click", () => showStart());
   dom.btnPlayAgain.addEventListener("click", () => {
@@ -2518,15 +2542,15 @@
     const trials = loadStore("sg.trials", {});
     const trialCount = Object.keys(trials).filter(k => trials[k]).length;
     const parts = [];
-    if (bot) parts.push(`Bot — best <b>${bot.bestScore}</b> · ${bot.wins}/${bot.plays} won`);
-    if (hot) parts.push(`Duel — <b>${hot.plays}</b> played`);
-    if (trialCount) parts.push(`Trials — <b>${trialCount}</b>/${SCENARIOS.length} cleared`);
-    if (daily && daily.streak) parts.push(`Daily streak — <b>${daily.streak}</b>`);
-    dom.hallRecord.innerHTML = parts.length ? `⚜ Hall of the Fallen — ${parts.join(" &nbsp;·&nbsp; ")}` : "";
+    if (bot) parts.push(t("hall.bot", { best: bot.bestScore, wins: bot.wins, plays: bot.plays }));
+    if (hot) parts.push(t("hall.duel", { plays: hot.plays }));
+    if (trialCount) parts.push(t("hall.trials", { n: trialCount, total: SCENARIOS.length }));
+    if (daily && daily.streak) parts.push(t("hall.daily", { n: daily.streak }));
+    dom.hallRecord.innerHTML = parts.length ? t("hall.prefix", { parts: parts.join(" &nbsp;·&nbsp; ") }) : "";
     if (dom.btnDaily) {
       const doneToday = daily && daily.date === dailyKey();
       dom.btnDaily.disabled = !!doneToday;
-      dom.btnDaily.textContent = doneToday ? "Daily done ✓" : "☀ Daily Gambit";
+      dom.btnDaily.textContent = t(doneToday ? "btn.dailyDone" : "btn.daily");
     }
   }
 
@@ -2549,28 +2573,28 @@
   }
   function showGameOver() {
     if (state.runOutcome) {
-      dom.winnerHeadline.textContent = state.runOutcome === "victory" ? "THE DESCENT CONQUERED" : "FALLEN IN THE DESCENT";
+      dom.winnerHeadline.textContent = t(state.runOutcome === "victory" ? "over.descentWon" : "over.descentLost");
     } else if (state.scenario) {
       const won = state.trialResult && state.trialResult.won;
-      dom.winnerHeadline.textContent = won ? "TRIAL CLEARED" : "TRIAL FAILED";
+      dom.winnerHeadline.textContent = t(won ? "over.trialWon" : "over.trialLost");
     } else {
-      dom.winnerHeadline.textContent = state.winnerSide ? `${sideLabel(state.winnerSide).toUpperCase()} TRIUMPHANT` : "MUTUAL RUIN";
+      dom.winnerHeadline.textContent = state.winnerSide ? t("over.triumph", { side: sideLabel(state.winnerSide).toUpperCase() }) : t("over.ruin");
     }
     if (dom.ledger) {
       const rows = [
-        ["Kills", "kills"], ["Losses", "losses"], ["Reaping Spirals", "spirals"],
-        ["Aegis blocks", "aegisBroken"], ["Reinforcements", "summons"], ["Best combo", "bestCombo"],
+        [t("ledger.kills"), "kills"], [t("ledger.losses"), "losses"], [t("ledger.spirals"), "spirals"],
+        [t("ledger.aegisBlocks"), "aegisBroken"], [t("ledger.summons"), "summons"], [t("ledger.bestCombo"), "bestCombo"],
       ];
       const L = state.stats.light, D = state.stats.dark;
-      let html = `<div class="ledger-head"><span>Umbra</span><span>The Ledger of the Damned</span><span>Ember</span></div>`;
-      html += `<div class="ledger-row score"><span>${scoreFor("light")}</span><span>Score</span><span>${scoreFor("dark")}</span></div>`;
+      let html = `<div class="ledger-head"><span>${sideLabel("light")}</span><span>${t("ledger.title")}</span><span>${sideLabel("dark")}</span></div>`;
+      html += `<div class="ledger-row score"><span>${scoreFor("light")}</span><span>${t("ledger.score")}</span><span>${scoreFor("dark")}</span></div>`;
       for (const [label, key] of rows) html += `<div class="ledger-row"><span>${L[key]}</span><span>${label}</span><span>${D[key]}</span></div>`;
-      html += `<div class="ledger-row"><span>—</span><span>Rounds fought: ${state.roundNumber + 1}</span><span>—</span></div>`;
+      html += `<div class="ledger-row"><span>—</span><span>${t("ledger.rounds", { n: state.roundNumber + 1 })}</span><span>—</span></div>`;
       const rec = state.lastRecord;
-      if (rec) html += `<div class="ledger-best">Best score: <b>${rec.bestScore}</b> · Wins: <b>${rec.wins}</b>/${rec.plays}${rec.fastest ? ` · Fastest win: <b>${rec.fastest}</b> rounds` : ""}</div>`;
-      if (state.scenario && state.trialResult) html += `<div class="ledger-best">${state.trialResult.won ? "Objective complete" : "Objective failed"} · ${state.scenario.blurb || ""}</div>`;
+      if (rec) html += `<div class="ledger-best">${t("ledger.best", { best: rec.bestScore, wins: rec.wins, plays: rec.plays })}${rec.fastest ? t("ledger.fastest", { n: rec.fastest }) : ""}</div>`;
+      if (state.scenario && state.trialResult) html += `<div class="ledger-best">${t(state.trialResult.won ? "ledger.objDone" : "ledger.objFail")} · ${t("scenario." + state.scenario.id + ".blurb")}</div>`;
       if (state.dailyShare) html += `<div class="ledger-best" style="color:var(--gold)">${state.dailyShare}</div>`;
-      if (state.runOutcome) { const m = loadStore("sg.mirror", {}); html += `<div class="ledger-best">Chambers cleared: <b>${state.run ? state.run.chamber : 0}</b>/${CHAMBERS.length} · Obols earned: <b>+${state.obolsEarned || 0}</b> (total ${m.obols || 0})</div>`; }
+      if (state.runOutcome) { const m = loadStore("sg.mirror", {}); html += `<div class="ledger-best">${t("ledger.descent", { n: state.run ? state.run.chamber : 0, total: CHAMBERS.length, obols: state.obolsEarned || 0, bank: m.obols || 0 })}</div>`; }
       dom.ledger.innerHTML = html;
     }
     dom.gameOverScreen.classList.remove("hidden");
@@ -2622,9 +2646,9 @@
     genTerrain();
     state.lastTs = performance.now();
     dom.eventLog.innerHTML = "";
-    logEvent(opts.scenario ? `Trial: ${opts.scenario.name}.` : "The gambit begins. Both houses plan in secret.");
-    if (mode === "bot") logEvent(`Your foe: ${SG.AI_PERSONA[state.botPersona].name} · ${state.difficulty.toUpperCase()}.`);
-    if (state.furiesEnabled) { spawnFury(state.lastTs); logEvent("Furies stalk this duel — beware the neutral horrors."); }
+    logEvent(opts.scenario ? t("log.trial", { name: scenarioName(opts.scenario) }) : t("log.start"));
+    if (mode === "bot") logEvent(t("log.foe", { persona: t("persona.name." + state.botPersona), difficulty: t("difficulty." + state.difficulty).toUpperCase() }));
+    if (state.furiesEnabled) { spawnFury(state.lastTs); logEvent(t("log.furies")); }
     dom.startScreen.classList.add("hidden");
     dom.gameOverScreen.classList.add("hidden");
     dom.handoffScreen.classList.add("hidden");
@@ -2664,6 +2688,31 @@
     requestAnimationFrame(loop);
   }
 
+  // Language switch (fired by i18n.js): redraw every piece of dynamic text currently on screen.
+  // Past event-log lines keep the language they were written in.
+  function refreshLanguage() {
+    if (!state) return;
+    dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
+    dom.btnSummon.textContent = t("btn.summon");
+    dom.btnWard.textContent = t("btn.wardOff");
+    dom.btnThreat.textContent = t("btn.threatOff");
+    dom.btnForesight.textContent = t("btn.foresightOff");
+    dom.btnRevert.title = t("title.revert");
+    refreshHallRecord();
+    if (state.scene === "planning") updatePlanBar();
+    if (state.scene === "handoff" && state.handoffTo) {
+      dom.handoffText.textContent = t("handoff.text", { side: sideLabel(state.handoffTo) });
+      dom.btnHandoffReady.textContent = t("handoff.ready", { side: sideLabel(state.handoffTo) });
+    }
+    refreshBanner();
+    if (!dom.gameOverScreen.classList.contains("hidden")) showGameOver();
+    if (dom.trialsScreen && !dom.trialsScreen.classList.contains("hidden")) populateTrials();
+    if (dom.mirrorScreen && !dom.mirrorScreen.classList.contains("hidden")) refreshMirror();
+    if (dom.helpScreen && !dom.helpScreen.classList.contains("hidden")) decorateHelpRoles();
+    if (choiceOpen()) cancelChoice();               // its text was generated in the old language
+  }
+  window.addEventListener("sg:lang", refreshLanguage);
+
   /* ============================================================
    * BOOT
    * ============================================================ */
@@ -2671,7 +2720,7 @@
   buildBoardCache();
   seedAmbientParticles();
   buildLegendIcons();
-  refreshHallRecord();
+  refreshLanguage();
   requestAnimationFrame(loop);
   Object.defineProperty(SG, "state", { get: () => state });
 })();

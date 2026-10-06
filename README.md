@@ -17,6 +17,10 @@ Pure vanilla HTML/CSS/JS on an HTML5 canvas — no build step, no dependencies.
 - **Chambers of the Descent** — a roguelike run with drafted **Boons** and the persistent **Mirror of Night**.
 - Styx Hazards (living terrain), replay & undo, threat overlay, foresight, and accessibility options.
 
+## Languages
+English, Français, 中文 and العربية (right-to-left) — pick one on the start screen or in Options.
+Dictionaries live in `i18n/<lang>.js`; `i18n/en.js` is the reference, and `i18n.js` applies them (missing keys fall back to English).
+
 ## Run locally
 It's a static site — open `index.html`, or serve it:
 

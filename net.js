@@ -45,7 +45,7 @@
     getSide() { return mySide; },
 
     createRoom(opts, cb) {
-      if (!this.init()) return cb("Firebase indisponible (pas de connexion ?).");
+      if (!this.init()) return cb("net.unavailable");
       code = randomCode(); mySide = "light";
       roomRef = db.ref("rooms/" + code);
       resolvedUpTo = -1; started = false;
@@ -61,14 +61,14 @@
     },
 
     joinRoom(inCode, cb) {
-      if (!this.init()) return cb("Firebase indisponible (pas de connexion ?).");
+      if (!this.init()) return cb("net.unavailable");
       inCode = (inCode || "").toUpperCase().trim();
-      if (inCode.length < 3) return cb("Code invalide.");
+      if (inCode.length < 3) return cb("net.badCode");
       const ref = db.ref("rooms/" + inCode);
       ref.get().then(snap => {
-        if (!snap.exists()) return cb("Salle introuvable.");
+        if (!snap.exists()) return cb("net.notFound");
         const v = snap.val();
-        if (v.status === "playing" || (v.guest && v.guest.present)) return cb("Salle déjà pleine.");
+        if (v.status === "playing" || (v.guest && v.guest.present)) return cb("net.full");
         code = inCode; mySide = "dark"; roomRef = ref; resolvedUpTo = -1; started = false;
         return ref.update({ guest: { present: true }, status: "playing" }).then(() => {
           roomRef.child("guest/present").onDisconnect().set(false);
