@@ -333,6 +333,9 @@ html, body {
 .stat-row.muted { color: #8a7f9a; font-size: 0.72em; }
 .aegis { color: var(--gold); letter-spacing: 2px; font-size: 1.05em; }
 .aegis .spent { color: #4a3f52; }
+.aegis .pip.bonus { color: #ffe9a8; text-shadow: 0 0 6px rgba(255,233,168,0.8); }  /* charge from a bonus */
+.aegis .spent.bonus { color: #5a4a3a; }
+.aegis .aegis-count { font-size: 0.72em; letter-spacing: 0; color: #c7bcd4; margin-left: 2px; }
 .royal { font-size: 0.82em; letter-spacing: 1px; }
 .royal .king { color: var(--gold); }
 .royal .queen { color: #c98bd1; }

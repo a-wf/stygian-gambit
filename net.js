@@ -106,7 +106,8 @@
         reaperMode: c.reaperMode || null,
       })),
       wards: packet.wards || [],
-      summons: (packet.summons || []).map(s => ({ type: s.type, row: s.row, col: s.col })),
+      summons: (packet.summons || []).map(s => ({ type: s.type, row: s.row, col: s.col, warded: !!s.warded })),
+      aegis: typeof packet.aegis === "number" ? packet.aegis : null,
     };
   }
 

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Stygian Gambit</title>
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 <div id="app">
@@ -236,10 +236,11 @@
         </ul>
 
         <h2>Aegis (protection)</h2>
-        <p><b>3 charges</b> par partie. En phase Stratégie, active <b>Ward</b> puis clique une de tes pièces : elle reçoit un bouclier doré qui absorbe le prochain coup mortel, puis disparaît. Reclique pour récupérer la charge.</p>
+        <p><b>3 charges de base</b> par partie. Tu peux en avoir <b>plus</b> grâce à un bonus — difficulté <b>Easy</b> (+1), amélioration <b>Mirror of Night</b> (+1/+2) ou Boon <b>Hécate</b> (+1) ; elles apparaissent en surbrillance et le compteur affiche <b>restantes/total</b>.</p>
+        <p>En phase Stratégie, active <b>Ward</b> puis clique une de tes pièces : elle reçoit un bouclier doré qui reste actif <b>jusqu'à ce qu'il serve</b> (même sur plusieurs rounds). Il absorbe <b>un seul</b> événement mortel — un coup, ou la lave — puis se brise. Si deux ennemis frappent la même pièce dans le même round, le second coup la tue. Reclique la pièce pour retirer le bouclier et récupérer la charge. Cliquer ailleurs quitte le mode Ward.</p>
 
         <h2>Cristaux &amp; invocation</h2>
-        <p><b>10 cristaux</b> par ennemi tué. Enchaîner plusieurs kills dans une même bataille rapporte un <b>bonus SOULS</b>. Clique <b>Summon</b> puis une case vide de ta moitié pour invoquer un renfort : <b>20</b> Skirmisher · <b>30</b> Juggernaut/Wildrider/Trickster · <b>40</b> Harrower.</p>
+        <p><b>10 cristaux</b> par ennemi tué. Enchaîner plusieurs kills dans une même bataille rapporte un <b>bonus SOULS</b>. Clique <b>Summon</b>, choisis un renfort, puis une case vide de ta moitié : <b>20</b> Skirmisher · <b>30</b> Juggernaut/Wildrider/Trickster · <b>40</b> Harrower. Une invocation par choix — tu reprends ensuite la main normalement. <b>Undo</b> annule la dernière action (commande, invocation remboursée, ou bouclier) ; <b>Clear</b> annule tout le tour.</p>
 
         <h2>Replay &amp; Undo</h2>
         <p><b>↻ Replay</b> — rejoue visuellement la dernière bataille (le plateau revient à l'avant-combat, l'action se rejoue, puis retour à ta planification). <b>↺ Undo Round</b> — annule le dernier round résolu et te renvoie à sa planification (le mode « mauvais perdant »).</p>
@@ -258,6 +259,9 @@
 
         <h2>Modes solo</h2>
         <p><b>⚑ Trials</b> — scénarios faits main avec objectifs variés (régicide, survie). <b>☀ Daily Gambit</b> — un défi seedé par la date, identique pour tous, une tentative par jour, avec série (streak) et texte à partager. <b>▼ Chambers of the Descent</b> — un run roguelike de 4 chambres de plus en plus dures ; entre chaque, tu <b>draftes un Boon</b> divin (Charon, Hermès, Hécate, Arès, Nyx) et tu conserves cristaux et boons. <b>🜃 Mirror of Night</b> — dépense les <b>Obols</b> gagnés en run pour des améliorations permanentes.</p>
+
+        <h2>Online Duel</h2>
+        <p>Un joueur clique <b>Create a room</b> et partage le <b>code</b> ; l'autre le saisit dans <b>Join a room</b>. Chacun voit <b>sa propre armée en bas</b>. Vous planifiez en même temps, en secret ; dès que les deux ont validé, la bataille se joue à l'identique sur les deux écrans. En ligne : pas de <b>Undo Round</b> (les deux joueurs partagent la même chronologie), pas de Styx Hazards, et une pièce invoquée ne peut agir qu'au round suivant.</p>
 
         <h2>Options (Rites of Access)</h2>
         <p>Règle la <b>vitesse de bataille</b> (0.5×–2×), active <b>Reduce motion</b> (sans secousses/flash/zoom) et les <b>glyphes daltoniens</b> (▲ Umbra / ▽ Ember). Réglages conservés entre les parties.</p>
@@ -291,8 +295,8 @@
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
-<script src="net.js?v=2"></script>
-<script src="game.js?v=2"></script>
-<script src="ai.js?v=2"></script>
+<script src="net.js?v=3"></script>
+<script src="game.js?v=3"></script>
+<script src="ai.js?v=3"></script>
 </body>
 </html>

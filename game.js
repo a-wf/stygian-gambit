@@ -145,7 +145,10 @@
       hazardsEnabled: false, terrain: null,
       boons: { light: {}, dark: {} },
       run: null,
-      onlineWaiting: false,
+      onlineWaiting: false, onlinePending: null,
+      viewFlip: false,                  // render rotated 180° so this client's side sits at the bottom
+      undoStack: [],                    // this planning turn's commands / summons / wards, newest last
+      aegisMax: { light: AEGIS_START, dark: AEGIS_START },
       stats: { light: newStats(), dark: newStats() },
       eventLog: [],
       winnerSide: null,
@@ -239,6 +242,9 @@
   function pieceById(id) { return state.pieces.find(p => p.id === id); }
   function inBounds(r, c) { return r >= 0 && r < 8 && c >= 0 && c < 8; }
   function cellCenter(row, col) { return { x: col * TILE + TILE / 2, y: row * TILE + TILE / 2 }; }
+  // Board-space → screen-space (the view is rotated 180° when this client plays the top side).
+  function sx(x) { return state.viewFlip ? BOARD_PX - x : x; }
+  function sy(y) { return state.viewFlip ? BOARD_PX - y : y; }
   function chebyshev(a, b) { return Math.max(Math.abs(a.row - b.row), Math.abs(a.col - b.col)); }
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
   function lerp(a, b, t) { return a + (b - a) * t; }
@@ -291,7 +297,7 @@
   function applyTerrainOnLand(piece, ts) {
     const kind = terrainAt(piece.row, piece.col);
     if (!kind || !piece.alive) return;
-    if (kind === "lava") { spawnDamageText(piece.x, piece.y - 6, "ENGULFED", "#ff7a3a"); killPiece(piece, null, ts); }
+    if (kind === "lava") environmentKill(piece, null, ts, "ENGULFED");
     else if (kind === "font") {
       if (piece.maxLives > 1 && piece.lives < piece.maxLives && (piece.side === "light" || piece.side === "dark")) { piece.lives++; spawnDamageText(piece.x, piece.y - 6, "+1 LIFE", "#c98bd1"); syncSidePanels(); }
       else if (piece.side === "light" || piece.side === "dark") { state.crystals[piece.side] += 5; spawnDamageText(piece.x, piece.y - 6, "+5◆", "#8fd0ff"); syncSidePanels(); }
@@ -476,21 +482,61 @@
   function addPlanCommand(cmd) {
     const arr = state.plan[state.planningSide];
     const existingIdx = arr.findIndex(c => c.pieceId === cmd.pieceId);
-    if (existingIdx >= 0) { arr[existingIdx] = cmd; return true; }
+    if (existingIdx >= 0) {
+      state.undoStack.push({ type: "commandEdit", pieceId: cmd.pieceId, prev: arr[existingIdx] });
+      arr[existingIdx] = cmd;
+      return true;
+    }
     const distinct = new Set(arr.map(c => c.pieceId)).size;
     const cap = maxCmdFor(state.planningSide);
     if (distinct >= cap) { setCaption(`Only ${cap} pieces may act each round.`); return false; }
     arr.push(cmd);
+    state.undoStack.push({ type: "command", pieceId: cmd.pieceId });
     return true;
   }
 
   function toggleWard(piece) {
     const side = state.planningSide;
     if (piece.side !== side) return;
-    if (piece.warded) { piece.warded = false; state.aegis[side]++; }
-    else if (state.aegis[side] > 0) { piece.warded = true; state.aegis[side]--; bumpStat(side, "aegisUsed"); audio.boon(); }
-    else setCaption("No Aegis charges remain.");
+    if (piece.warded) {
+      piece.warded = false;
+      state.aegis[side] = Math.min(state.aegisMax[side], state.aegis[side] + 1);  // never exceed the match's charges
+      state.undoStack.push({ type: "unward", pieceId: piece.id });
+      setCaption(`${describePiece(piece)}'s Aegis is withdrawn.`);
+    } else if (state.aegis[side] > 0) {
+      piece.warded = true; state.aegis[side]--;
+      bumpStat(side, "aegisUsed"); audio.boon();
+      state.undoStack.push({ type: "ward", pieceId: piece.id });
+      setCaption(`${describePiece(piece)} is shielded — it will survive one lethal blow.`);
+    } else setCaption("No Aegis charges remain.");
     syncSidePanels();
+  }
+
+  // Undo the most recent planning action (command, summon or ward) for the side planning now.
+  function undoLast() {
+    const side = state.planningSide;
+    const a = state.undoStack.pop();
+    if (!a) { state.plan[side].pop(); return; }                    // legacy fallback
+    if (a.type === "summon") {
+      const i = state.pieces.findIndex(p => p.id === a.pieceId);
+      if (i >= 0) state.pieces.splice(i, 1);
+      state.crystals[a.side] += a.cost;
+      state.plan[side] = state.plan[side].filter(c => c.pieceId !== a.pieceId);
+      if (!state.isReplay && state.stats[a.side]) state.stats[a.side].summons = Math.max(0, state.stats[a.side].summons - 1);
+      setCaption("Summon undone — crystals refunded.");
+    } else if (a.type === "command") {
+      state.plan[side] = state.plan[side].filter(c => c.pieceId !== a.pieceId);
+    } else if (a.type === "commandEdit") {
+      const i = state.plan[side].findIndex(c => c.pieceId === a.pieceId);
+      if (i >= 0) state.plan[side][i] = a.prev;
+    } else if (a.type === "ward") {
+      const p = pieceById(a.pieceId);
+      if (p && p.warded) { p.warded = false; state.aegis[side] = Math.min(state.aegisMax[side], state.aegis[side] + 1); }
+      if (state.stats[side]) state.stats[side].aegisUsed = Math.max(0, state.stats[side].aegisUsed - 1);
+    } else if (a.type === "unward") {
+      const p = pieceById(a.pieceId);
+      if (p && !p.warded && state.aegis[side] > 0) { p.warded = true; state.aegis[side]--; }
+    }
   }
 
   function onValidate() {
@@ -542,6 +588,7 @@
     state.planningSide = state.handoffTo;
     state.handoffTo = null;
     state.scene = "planning";
+    state.undoStack = [];          // the next side's turn — the previous side's plan is locked in
     state.wardMode = false;
     state.summonMenuOpen = false;
     state.summonArmed = null;
@@ -558,6 +605,7 @@
     // vs bot / online: you control your own side. Hotseat: light first.
     state.planningSide = (state.mode === "bot" || state.mode === "online") ? state.humanSide : "light";
     state.onlineWaiting = false;
+    state.undoStack = [];
     state.wardMode = false;
     state.summonMenuOpen = false;
     state.summonArmed = null;
@@ -727,17 +775,17 @@
     state.shake = Math.min(9, state.shake + 3);
     state.flash = Math.min(1, state.flash + 0.18);
     setCaption(`${describePiece(piece)} strikes a killing blow!`);
-    strikeKill(target, piece, ts);
+    const outcome = strikeKill(target, piece, ts);
 
-    // Gambit Shove — Juggernaut & Wildrider knock a SURVIVING victim back a tile;
-    // shoved into lava/off a chasm's edge is an environmental execution.
-    if ((piece.type === "juggernaut" || piece.type === "wildrider") && target.alive) {
+    // Gambit Shove — Juggernaut & Wildrider knock back a royal that SURVIVED on its lives.
+    // A blow the Aegis absorbed carries no force, so a warded piece is never shoved.
+    if ((piece.type === "juggernaut" || piece.type === "wildrider") && outcome === "wounded") {
       const dr = Math.sign(target.row - piece.row), dc = Math.sign(target.col - piece.col);
       const nr = target.row + dr, nc = target.col + dc;
       const g = buildOccupancyGrid(state.pieces);
       if ((dr || dc) && inBounds(nr, nc) && !g[nr][nc] && terrainAt(nr, nc) !== "chasm") {
         startDash(target, nr, nc, ts, { kind: "move" });
-        if (terrainAt(nr, nc) === "lava") { spawnDamageText(target.x, target.y - 6, "SHOVED → LAVA", "#ff7a3a"); killPiece(target, piece.side, ts); }
+        if (terrainAt(nr, nc) === "lava") environmentKill(target, piece.side, ts, "SHOVED → LAVA");
         else spawnDamageText(target.x, target.y - 6, "SHOVED", "#c7bcd4");
       }
     }
@@ -759,8 +807,9 @@
     }
   }
 
+  // Returns "blocked" (Aegis absorbed it), "wounded" (royal lost a life) or "killed".
   function strikeKill(target, attacker, ts) {
-    if (!target.alive) return;
+    if (!target.alive) return null;
     if (target.warded) {
       target.warded = false;
       target.hitFlashUntil = ts + 240;
@@ -774,13 +823,15 @@
       audio.special();
       logEvent(`${describePiece(target)}'s Aegis shatters the blow!`);
       syncSidePanels();
-      return;
+      return "blocked";
     }
     target.lives -= 1;
     target.hitFlashUntil = ts + 200;
     spawnHitParticles(target.x, target.y, attacker ? attacker.side : null);
+    let outcome = "wounded";
     if (target.lives <= 0) {
       killPiece(target, attacker ? attacker.side : null, ts);
+      outcome = "killed";
     } else {
       spawnShockwave(target.x, target.y, glyphColor(target.side).glow, ts, { maxRadius: 46, durationMs: 380 });
       state.shake = Math.min(9, state.shake + 3);
@@ -791,6 +842,26 @@
       logEvent(`${describePiece(target)} reels — ${target.lives} ${target.lives === 1 ? "life" : "lives"} remain.`);
     }
     syncSidePanels();
+    return outcome;
+  }
+
+  // Lethal hazards (lava) go through the Aegis too: one charge holds back one lethal event.
+  function environmentKill(piece, killerSide, ts, label) {
+    if (!piece.alive) return false;
+    if (piece.warded) {
+      piece.warded = false;
+      piece.hitFlashUntil = ts + 240;
+      spawnShockwave(piece.x, piece.y, "#e8c657", ts, { maxRadius: 54, durationMs: 440 });
+      spawnDamageText(piece.x, piece.y - 6, "AEGIS ✦", "#e8c657");
+      bumpStat(piece.side, "aegisBroken");
+      audio.special();
+      logEvent(`${describePiece(piece)}'s Aegis holds back the abyss!`);
+      syncSidePanels();
+      return false;
+    }
+    spawnDamageText(piece.x, piece.y - 6, label, "#ff7a3a");
+    killPiece(piece, killerSide, ts);
+    return true;
   }
 
   function killPiece(target, killerSide, ts) {
@@ -820,7 +891,7 @@
       if (chain >= 2) {
         const bonus = 5 * (chain - 1);
         state.crystals[killerSide] += bonus;
-        spawnDamageText(BOARD_PX / 2, BOARD_PX * 0.26, `${chain} SOULS · +${bonus}◆`, "#e8c657");
+        spawnDamageText(BOARD_PX / 2, BOARD_PX * 0.26, `${chain} SOULS · +${bonus}◆`, "#e8c657", true);
         state.shake = Math.min(15, state.shake + chain);
         state.flash = Math.min(1, state.flash + 0.04 * chain);
         audio.combo(chain);
@@ -841,6 +912,9 @@
       clearSelection();
       setCaption("");
       refreshBanner(); updatePlanBar(); syncSidePanels();
+      // An online round that completed while we were replaying can resolve now.
+      const pend = state.onlinePending;
+      if (state.mode === "online" && pend && pend.round === state.roundNumber) { state.onlinePending = null; resolveOnlineRound(pend.plans); }
       return;
     }
     const lightKing = state.pieces.find(p => p.type === "sovereign" && p.side === "light" && p.alive);
@@ -971,6 +1045,8 @@
     state.battleSpeed = o.battleSpeed || 1;
     state.colorGlyphs = o.colorGlyphs || false;
     state.firstSide = config.firstSide || "light";
+    state.viewFlip = mySide === "light";           // each player sees their own army at the bottom
+    state.aegisMax = { light: state.aegis.light, dark: state.aegis.dark };
     state.pieces = buildStartingPieces();
     state.lastTs = performance.now();
     dom.eventLog.innerHTML = "";
@@ -987,15 +1063,22 @@
   function buildMyPacket() {
     const side = state.humanSide;
     const startIds = onlineRoundIds || new Set();
-    const summons = state.pieces.filter(p => p.alive && p.side === side && !startIds.has(p.id)).map(p => ({ type: p.type, row: p.row, col: p.col }));
+    // Summons carry their ward flag; `wards` is the COMPLETE set of shielded round-start pieces
+    // (so a withdrawn ward is honoured too) and `aegis` is the charges left — both authoritative for this side.
+    const summons = state.pieces.filter(p => p.alive && p.side === side && !startIds.has(p.id)).map(p => ({ type: p.type, row: p.row, col: p.col, warded: !!p.warded }));
     const wards = state.pieces.filter(p => p.alive && p.side === side && p.warded && startIds.has(p.id)).map(p => p.id);
     const commands = (state.plan[side] || []).map(c => ({ pieceId: c.pieceId, kind: c.kind, row: c.row, col: c.col, targetId: c.targetId, reaperMode: c.reaperMode }));
-    return { commands, wards, summons };
+    return { commands, wards, summons, aegis: state.aegis[side] };
   }
   function applyOnlinePacket(side, packet) {
     if (!packet) return;
-    for (const s of (packet.summons || [])) summonPiece(side, s.type, s.row, s.col);
-    for (const id of (packet.wards || [])) { const p = pieceById(id); if (p && p.alive && p.side === side && !p.warded && state.aegis[side] > 0) { p.warded = true; state.aegis[side]--; } }
+    const wardSet = new Set(packet.wards || []);
+    for (const p of state.pieces) if (p.alive && p.side === side) p.warded = wardSet.has(p.id);
+    for (const s of (packet.summons || [])) {
+      const sp = summonPiece(side, s.type, s.row, s.col);
+      if (sp && s.warded) sp.warded = true;
+    }
+    if (typeof packet.aegis === "number") state.aegis[side] = clamp(packet.aegis, 0, state.aegisMax[side]);
   }
   function resolveOnlineRound(plans) {
     if (state.mode !== "online" || !onlineRoundSnap) return;
@@ -1104,7 +1187,7 @@
     audio.special();
     logEvent(`${sideLabel(side)} summons a ${PIECE_DEFS[type].label} from the abyss.`);
     syncSidePanels();
-    return true;
+    return p;
   }
 
   /* ============================================================
@@ -1198,8 +1281,9 @@
     opts = opts || {};
     state.shockwaves.push({ x, y, color, startTs: ts, durationMs: opts.durationMs || 400, maxRadius: opts.maxRadius || 46 });
   }
-  function spawnDamageText(x, y, label, color) {
-    state.damageNumbers.push({ x, y, label, color: color || "#ecdcc6", life: 0.9, maxLife: 0.9 });
+  // `screen` = position is already in screen space (e.g. the centre-board combo banner).
+  function spawnDamageText(x, y, label, color, screen) {
+    state.damageNumbers.push({ x, y, label, color: color || "#ecdcc6", life: 0.9, maxLife: 0.9, rise: 0, screen: !!screen });
     if (state.damageNumbers.length > 24) state.damageNumbers.shift();
   }
   function triggerZoom(x, y, amt) {
@@ -1209,7 +1293,7 @@
   }
   function updateParticles(dt, ts) {
     state.particles = state.particles.filter(p => { p.life -= dt; if (p.life <= 0) return false; p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.92; p.vy *= 0.92; return true; });
-    state.damageNumbers = state.damageNumbers.filter(d => { d.life -= dt; d.y -= 26 * dt; return d.life > 0; });
+    state.damageNumbers = state.damageNumbers.filter(d => { d.life -= dt; d.rise = (d.rise || 0) + 26 * dt; return d.life > 0; });
     state.slashes = state.slashes.filter(s => ts - s.startTs < s.durationMs);
     state.projectiles = state.projectiles.filter(p => ts - p.startTs < p.durationMs);
     state.shockwaves = state.shockwaves.filter(s => ts - s.startTs < s.durationMs);
@@ -1434,7 +1518,13 @@
         let grid = buildOccupancyGrid(clones);
         if (cmd.kind === "move") {
           const legal = inBounds(cmd.row, cmd.col) && !grid[cmd.row][cmd.col] && getMoveTiles(p, grid).some(t => t.row === cmd.row && t.col === cmd.col);
-          if (legal) { p.row = cmd.row; p.col = cmd.col; if (terrainAt(p.row, p.col) === "lava") { p.alive = false; forecast.deaths.push({ id: p.id, row: p.row, col: p.col, type: p.type, side: p.side }); } }
+          if (legal) {
+            p.row = cmd.row; p.col = cmd.col;
+            if (terrainAt(p.row, p.col) === "lava") {
+              if (p.warded) p.warded = false;
+              else { p.alive = false; forecast.deaths.push({ id: p.id, row: p.row, col: p.col, type: p.type, side: p.side }); }
+            }
+          }
         } else {
           const defs = PIECE_DEFS[p.type];
           if (defs.strikeAoe && cmd.reaperMode !== "advance") {
@@ -1466,7 +1556,7 @@
       const cc = cellCenter(m.row, m.col);
       ctx.globalAlpha = 0.55; ctx.strokeStyle = hexToRgba(glyphColor(m.side).glow, 0.9); ctx.setLineDash([4, 3]); ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(cc.x, cc.y, TILE * 0.40, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-      ctx.globalAlpha = 0.26; ctx.save(); ctx.translate(cc.x, cc.y); ctx.scale(0.78, 0.78); paintFigure(m.type, sidePalette(m.side), TILE * 0.33, ts); ctx.restore();
+      ctx.globalAlpha = 0.26; ctx.save(); ctx.translate(cc.x, cc.y); if (state.viewFlip) ctx.rotate(Math.PI); ctx.scale(0.78, 0.78); paintFigure(m.type, sidePalette(m.side), TILE * 0.33, ts); ctx.restore();
     }
     ctx.globalAlpha = 0.95; ctx.setLineDash([]);
     for (const d of fc.deaths) {
@@ -1510,8 +1600,15 @@
         ctx.moveTo(to.x + 8, to.y - 8); ctx.lineTo(to.x - 8, to.y + 8); ctx.stroke();
       }
       ctx.restore();
-      // order badge
-      drawBadge(to.x, to.y - TILE * 0.38, i + 1);
+    });
+  }
+  // Order badges (1·2·3) in screen space so the numbers always read upright.
+  function drawPlanBadges() {
+    if (state.scene !== "planning") return;
+    state.plan[state.planningSide].forEach((cmd, i) => {
+      if (!pieceById(cmd.pieceId)) return;
+      const to = cellCenter(cmd.row, cmd.col);
+      drawBadge(sx(to.x), sy(to.y) - TILE * 0.38, i + 1);
     });
   }
   function arrowHead(x1, y1, x2, y2, color) {
@@ -1577,13 +1674,15 @@
       ctx.restore();
     }
 
+    // "down" on screen: when the view is rotated 180°, board-space +y points up, so flip the offset.
+    const dn = state.viewFlip ? -1 : 1;
     ctx.save(); ctx.globalAlpha = fadeT * 0.32;
-    ctx.beginPath(); ctx.ellipse(p.x, p.y + r * 0.95 + bob * 0.2, r * 0.9 * scale, r * 0.32 * scale, 0, 0, Math.PI * 2);
+    ctx.beginPath(); ctx.ellipse(p.x, p.y + dn * (r * 0.95 + bob * 0.2), r * 0.9 * scale, r * 0.32 * scale, 0, 0, Math.PI * 2);
     ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fill(); ctx.restore();
 
     if (!dying) {
       ctx.save(); ctx.globalAlpha = fadeT;
-      ctx.beginPath(); ctx.ellipse(p.x, p.y + r * 1.0, r * 0.78 * scale, r * 0.26 * scale, 0, 0, Math.PI * 2);
+      ctx.beginPath(); ctx.ellipse(p.x, p.y + dn * r * 1.0, r * 0.78 * scale, r * 0.26 * scale, 0, 0, Math.PI * 2);
       ctx.fillStyle = "rgba(18,10,20,0.9)"; ctx.fill();
       ctx.lineWidth = 1.5; ctx.strokeStyle = hexToRgba(pal.gold, 0.7); ctx.stroke(); ctx.restore();
     }
@@ -1591,6 +1690,7 @@
     ctx.save();
     ctx.globalAlpha = fadeT;
     ctx.translate(p.x + lungeX, p.y + lungeY + bob);
+    if (state.viewFlip) ctx.rotate(Math.PI);   // keep the figure upright inside the rotated board
     if (dying) { const prog = 1 - fadeT; ctx.rotate((p.deathSpin || 0) * prog); ctx.scale(1 - prog * 0.4, 1 - prog * 0.4); ctx.translate(0, prog * 12); }
     else ctx.scale(scale * idlePulse, scale * idlePulse);
 
@@ -1620,16 +1720,23 @@
       ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(0, 0, r * 1.1, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
-
-    // life pips (royalty)
-    if (!dying && p.maxLives > 1) drawLifePips(p, r, bob);
-    // colorblind-safe side glyph
-    if (!dying && state.colorGlyphs) drawSideGlyph(p, r, bob);
+    // life pips + colorblind glyphs are drawn upright in the screen layer (drawPieceMarkers)
   }
 
-  function drawSideGlyph(p, r, bob) {
+  // Screen-space markers for each living piece — always upright, never clipped by the board edge.
+  function drawPieceMarkers() {
+    const r = TILE * 0.33;
+    for (const p of state.pieces) {
+      if (!p.alive) continue;
+      const x = sx(p.x), y = sy(p.y);
+      if (p.maxLives > 1) drawLifePips(p, x, y, r);
+      if (state.colorGlyphs) drawSideGlyph(p, x, y, r);
+    }
+  }
+
+  function drawSideGlyph(p, x, y, r) {
     ctx.save();
-    ctx.translate(p.x + r * 0.95, p.y + bob - r * 0.95);
+    ctx.translate(x + r * 0.95, y - r * 0.95);
     ctx.lineWidth = 1.4; ctx.strokeStyle = "#0b0710"; ctx.fillStyle = "#ffffff";
     ctx.beginPath();
     if (p.side === "light") { ctx.moveTo(0, -5); ctx.lineTo(5, 4); ctx.lineTo(-5, 4); }
@@ -1639,11 +1746,12 @@
     ctx.restore();
   }
 
-  function drawLifePips(p, r, bob) {
+  function drawLifePips(p, cx, cy, r) {
     const n = p.maxLives, gap = 8, w = (n - 1) * gap;
-    const y = p.y + bob - r - 15;
+    // Sit on the side facing the board centre: a top-row royal shows its lives below it, not off-canvas.
+    const y = cy < BOARD_PX / 2 ? cy + r + 12 : cy - r - 15;
     for (let i = 0; i < n; i++) {
-      const x = p.x - w / 2 + i * gap;
+      const x = cx - w / 2 + i * gap;
       ctx.beginPath(); ctx.arc(x, y, 3.2, 0, Math.PI * 2);
       if (i < p.lives) { ctx.fillStyle = p.type === "sovereign" ? "#e8c657" : "#c98bd1"; ctx.fill(); ctx.strokeStyle = "#0b0710"; ctx.lineWidth = 1; ctx.stroke(); }
       else { ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.fill(); ctx.strokeStyle = "rgba(150,120,90,0.5)"; ctx.lineWidth = 1; ctx.stroke(); }
@@ -1804,10 +1912,11 @@
     ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
     for (const d of state.damageNumbers) {
       const a = clamp(d.life / d.maxLife, 0, 1);
+      const X = d.screen ? d.x : sx(d.x), Y = (d.screen ? d.y : sy(d.y)) - (d.rise || 0);
       ctx.globalAlpha = a;
       ctx.font = "bold 15px Georgia";
-      ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(8,4,12,0.92)"; ctx.strokeText(d.label, d.x, d.y);
-      ctx.fillStyle = d.color; ctx.fillText(d.label, d.x, d.y);
+      ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(8,4,12,0.92)"; ctx.strokeText(d.label, X, Y);
+      ctx.fillStyle = d.color; ctx.fillText(d.label, X, Y);
     }
     ctx.restore();
     ctx.globalAlpha = 1; ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
@@ -1817,25 +1926,40 @@
     ctx.save(); ctx.globalAlpha = clamp(state.flash, 0, 0.45); ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, BOARD_PX, BOARD_PX); ctx.restore();
   }
 
+  // Board-space drawing; rotated 180° when this client plays the top side so its army sits at the bottom.
+  function withWorld(fn) {
+    ctx.save();
+    if (state.viewFlip) { ctx.translate(BOARD_PX, BOARD_PX); ctx.rotate(Math.PI); }
+    fn();
+    ctx.restore();
+  }
+
   function render(ts) {
     ctx.save();
     if (state.shake > 0.1 && !state.reduceMotion) ctx.translate((Math.random() - 0.5) * state.shake, (Math.random() - 0.5) * state.shake);
     if (state.zoom > 0.001) {
-      const z = 1 + state.zoom, f = state.zoomFocus;
-      ctx.translate(f.x, f.y); ctx.scale(z, z); ctx.translate(-f.x, -f.y);
+      const z = 1 + state.zoom, fx = sx(state.zoomFocus.x), fy = sy(state.zoomFocus.y);
+      ctx.translate(fx, fy); ctx.scale(z, z); ctx.translate(-fx, -fy);
     }
-    if (boardCache) ctx.drawImage(boardCache, 0, 0);
-    drawTerrain(ts);
-    drawAmbientParticles();
-    drawHighlights(ts);
-    drawShockwaves(ts);
-    const sorted = state.pieces.slice().sort((a, b) => (a.alive ? 0 : 1) - (b.alive ? 0 : 1));
-    for (const p of sorted) drawPiece(p, ts);
-    if (state.scene === "planning" && state.foresightOn) drawForesight(ts);
-    drawPlanGhosts(ts);
-    drawSlashes(ts);
-    drawProjectiles(ts);
-    drawParticles();
+    withWorld(() => {
+      if (boardCache) ctx.drawImage(boardCache, 0, 0);
+      drawTerrain(ts);
+    });
+    drawAmbientParticles();                       // screen space: embers always drift upward
+    withWorld(() => {
+      drawHighlights(ts);
+      drawShockwaves(ts);
+      const sorted = state.pieces.slice().sort((a, b) => (a.alive ? 0 : 1) - (b.alive ? 0 : 1));
+      for (const p of sorted) drawPiece(p, ts);
+      if (state.scene === "planning" && state.foresightOn) drawForesight(ts);
+      drawPlanGhosts(ts);
+      drawSlashes(ts);
+      drawProjectiles(ts);
+      drawParticles();
+    });
+    // Screen layer — text and markers stay upright and on-canvas.
+    drawPieceMarkers();
+    drawPlanBadges();
     drawDamageNumbers();
     drawImpactFlash();
     ctx.restore();
@@ -1880,9 +2004,13 @@
   }
 
   function aegisStr(side) {
+    const max = Math.max(state.aegisMax[side], state.aegis[side]);
     let s = "";
-    for (let i = 0; i < AEGIS_START; i++) s += i < state.aegis[side] ? "⛨" : "<span class='spent'>⛨</span>";
-    return s;
+    for (let i = 0; i < max; i++) {
+      const bonus = i >= AEGIS_START ? " bonus" : "";              // charges from Mirror / Easy / Hecate
+      s += i < state.aegis[side] ? `<span class='pip${bonus}'>⛨</span>` : `<span class='spent${bonus}'>⛨</span>`;
+    }
+    return s + ` <span class='aegis-count'>${state.aegis[side]}/${max}</span>`;
   }
   function royalStr(side) {
     const k = state.pieces.find(p => p.type === "sovereign" && p.side === side);
@@ -1950,12 +2078,15 @@
     dom.planBar.classList.remove("hidden");
     const side = state.planningSide;
     const used = new Set(state.plan[side].map(c => c.pieceId)).size;
-    dom.planLabel.textContent = `${sideLabel(side)}: ${used}/${maxCmdFor(side)} commands · Aegis ×${state.aegis[side]} · ${state.crystals[side]}◆`;
+    dom.planLabel.textContent = `${sideLabel(side)}: ${used}/${maxCmdFor(side)} commands · Aegis ${state.aegis[side]}/${state.aegisMax[side]} · ${state.crystals[side]}◆`;
     dom.btnWard.textContent = state.wardMode ? "Ward: On" : "Ward: Off";
     dom.btnWard.classList.toggle("ward-on", state.wardMode);
     const canAct = !(state.mode === "bot" && state.planningSide !== state.humanSide);
     if (dom.btnReplay) dom.btnReplay.disabled = !state.lastBattle || !canAct;
-    if (dom.btnRevert) dom.btnRevert.disabled = state.history.length < 2 || !canAct;
+    if (dom.btnRevert) {
+      dom.btnRevert.disabled = state.history.length < 2 || !canAct || state.mode === "online";
+      dom.btnRevert.title = state.mode === "online" ? "Not available online — both players share one timeline" : "Undo the last resolved round";
+    }
     if (dom.btnThreat) { dom.btnThreat.textContent = state.showThreat ? "Doom Sight: On" : "Doom Sight: Off"; dom.btnThreat.classList.toggle("ward-on", state.showThreat); }
     if (dom.btnForesight) { dom.btnForesight.textContent = state.foresightOn ? "Foresight: On" : "Foresight: Off"; dom.btnForesight.classList.toggle("ward-on", state.foresightOn); }
     updateSummonUI();
@@ -1983,6 +2114,7 @@
   /* ---- Redo / Revert the last round (undo the outcome, replan) ---- */
   function revertRound() {
     if (state.scene !== "planning") return;
+    if (state.mode === "online") return;   // a one-sided rewind would desync the two boards
     if (state.mode === "bot" && state.planningSide !== state.humanSide) return;
     if (state.history.length < 2) { setCaption("The abyss remembers no earlier round."); refreshBanner(); return; }
     state.history.pop();                                    // discard this round's start
@@ -2017,7 +2149,8 @@
     const rect = canvas.getBoundingClientRect();
     const x = (evt.clientX - rect.left) * (canvas.width / rect.width);
     const y = (evt.clientY - rect.top) * (canvas.height / rect.height);
-    const col = Math.floor(x / TILE), row = Math.floor(y / TILE);
+    let col = Math.floor(x / TILE), row = Math.floor(y / TILE);
+    if (state.viewFlip) { col = 7 - col; row = 7 - row; }   // screen → board when the view is rotated
     if (!inBounds(row, col)) return null;
     return { row, col };
   }
@@ -2039,18 +2172,21 @@
     if (state.summonArmed) {
       if (homeRows(state.planningSide).includes(cell.row) && !clicked) {
         const armed = state.summonArmed;
-        summonPiece(state.planningSide, armed, cell.row, cell.col);
-        if (state.crystals[state.planningSide] < SUMMON_OPTIONS.find(o => o.type === armed).cost) state.summonArmed = null;
-      } else {
-        state.summonArmed = null;
+        const cost = SUMMON_OPTIONS.find(o => o.type === armed).cost;
+        const sp = summonPiece(state.planningSide, armed, cell.row, cell.col);
+        if (sp) state.undoStack.push({ type: "summon", pieceId: sp.id, cost, side: state.planningSide });
+        state.summonArmed = null;          // one placement per pick — control returns to the board
+        updatePlanBar();
+        return;
       }
+      state.summonArmed = null;            // clicked elsewhere: drop the summon and handle this click normally
       updatePlanBar();
-      return;
     }
 
     if (state.wardMode) {
-      if (clicked && clicked.side === state.planningSide) { toggleWard(clicked); updatePlanBar(); }
-      return;
+      if (clicked && clicked.side === state.planningSide) { toggleWard(clicked); updatePlanBar(); return; }
+      state.wardMode = false;              // clicked off your pieces: leave Ward mode and handle this click normally
+      updatePlanBar();
     }
 
     const sel = state.selection;
@@ -2184,7 +2320,11 @@
   }
   if (SG.Net) {
     SG.Net.onStart = (config) => startOnlineMatch(config, config.mySide || SG.Net.getSide());
-    SG.Net.onBothPlans = (round, plans) => { if (round === state.roundNumber) resolveOnlineRound(plans); };
+    SG.Net.onBothPlans = (round, plans) => {
+      // Resolve now if we're idle on that round; otherwise (e.g. mid-Replay) queue it.
+      if (state.mode === "online" && !state.isReplay && state.scene === "planning" && round === state.roundNumber) resolveOnlineRound(plans);
+      else state.onlinePending = { round, plans };
+    };
     SG.Net.onOpponentLeft = () => onlineOpponentLeft();
   }
   if (dom.btnOnline) dom.btnOnline.addEventListener("click", openOnline);
@@ -2209,8 +2349,17 @@
   });
   if (dom.btnMirror) dom.btnMirror.addEventListener("click", () => { refreshMirror(); dom.mirrorScreen.classList.remove("hidden"); });
   if (dom.btnMirrorClose) dom.btnMirrorClose.addEventListener("click", () => dom.mirrorScreen.classList.add("hidden"));
-  dom.btnUndo.addEventListener("click", () => { if (state.scene !== "planning") return; state.plan[state.planningSide].pop(); clearSelection(); updatePlanBar(); });
-  dom.btnClear.addEventListener("click", () => { if (state.scene !== "planning") return; state.plan[state.planningSide] = []; clearSelection(); updatePlanBar(); });
+  function planningLocked() { return state.scene !== "planning" || (state.mode === "online" && state.onlineWaiting); }
+  dom.btnUndo.addEventListener("click", () => {
+    if (planningLocked()) return;
+    undoLast(); clearSelection(); syncSidePanels(); updatePlanBar();
+  });
+  dom.btnClear.addEventListener("click", () => {
+    if (planningLocked()) return;
+    while (state.undoStack.length) undoLast();       // reverts this turn's summons and wards too
+    state.plan[state.planningSide] = [];
+    clearSelection(); syncSidePanels(); updatePlanBar();
+  });
   dom.btnValidate.addEventListener("click", () => onValidate());
   dom.btnHandoffReady.addEventListener("click", () => onHandoffReady());
   dom.btnMute.addEventListener("click", () => { audio.setMuted(!audio.muted); dom.btnMute.textContent = audio.muted ? "Unmute" : "Mute"; });
@@ -2336,6 +2485,7 @@
     if (mode === "bot") applyMirrorUpgrades(state.humanSide);
     // Hecate's Ward — +1 Aegis for any boon holder.
     for (const s of ["light", "dark"]) if (hasBoon(s, "hecate")) state.aegis[s] += 1;
+    state.aegisMax = { light: state.aegis.light, dark: state.aegis.dark };   // this match's real charge count
     genTerrain();
     state.lastTs = performance.now();
     dom.eventLog.innerHTML = "";
