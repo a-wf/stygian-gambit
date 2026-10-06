@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Stygian Gambit</title>
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 <div id="app">
@@ -18,7 +18,7 @@
         <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="sovereign"></canvas><span><b>Sovereign</b> — your king. Endures 2 killing blows; the 3rd ends the war. Lose it, lose all.</span></div>
         <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="reaper"></canvas><span><b>Reaper</b> — the queen. Endures 1 killing blow. Her strike slays the target and all foes beside her.</span></div>
         <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="juggernaut"></canvas><span><b>Juggernaut</b> — lances any foe down a straight line. One hit, one kill.</span></div>
-        <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="trickster"></canvas><span><b>Trickster</b> — blinks diagonally; strikes foes up to 3 tiles down a diagonal.</span></div>
+        <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="trickster"></canvas><span><b>Trickster</b> — the bishop: glides any distance along a diagonal and strikes down the whole diagonal.</span></div>
         <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="wildrider"></canvas><span><b>Wildrider</b> — knight's leap over any blocker; slays an adjacent foe.</span></div>
         <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="skirmisher"></canvas><span><b>Skirmisher</b> — steps forward, kills on the forward diagonals.</span></div>
         <div class="legend-item"><canvas class="legend-icon" width="52" height="52" data-piece="harrower"></canvas><span><b>Harrower</b> — teleports beside any ally; its kill drags down a foe next to the victim too.</span></div>
@@ -85,7 +85,7 @@
     <div id="planBar" class="plan-bar hidden">
       <span id="planLabel">—</span>
       <span class="plan-spacer"></span>
-      <button id="btnSummon" class="btn btn-ghost">Summon ▾</button>
+      <button id="btnSummon" class="btn btn-ghost">Summon…</button>
       <button id="btnWard" class="btn btn-ghost">Ward: Off</button>
       <button id="btnThreat" class="btn btn-ghost" title="Shade tiles enemies can strike">Doom Sight: Off</button>
       <button id="btnForesight" class="btn btn-ghost" title="Forecast your own plan">Foresight: Off</button>
@@ -94,15 +94,6 @@
       <button id="btnReplay" class="btn btn-ghost" title="Re-watch the last clash">↻ Replay</button>
       <button id="btnRevert" class="btn btn-ghost" title="Undo the last resolved round">↺ Undo Round</button>
       <button id="btnValidate" class="btn btn-primary">Validate ▶</button>
-    </div>
-    <div id="summonRow" class="summon-row hidden">
-      <span class="summon-hint" id="summonHint">Summon a reinforcement onto your home rank:</span>
-      <div id="summonBtns" class="summon-btns"></div>
-    </div>
-    <div id="reaperChoice" class="summon-row hidden">
-      <span class="summon-hint">Reaper's strike:</span>
-      <button id="reaperSpiral" class="btn btn-ghost">Reaping Spiral — hold ground, slay all around</button>
-      <button id="reaperAdvance" class="btn btn-ghost">Slay &amp; Advance — take the foe's square</button>
     </div>
     <div class="hud-bar">
       <div class="side-panel light">
@@ -140,6 +131,15 @@
       <div class="mode-row">
         <button id="btnHandoffReady" class="btn btn-primary">Ready</button>
       </div>
+    </div>
+  </div>
+
+  <div id="choiceScreen" class="overlay choice-overlay hidden">
+    <div class="overlay-inner choice-inner" role="dialog" aria-modal="true" aria-labelledby="choiceTitle">
+      <h2 class="choice-title" id="choiceTitle"></h2>
+      <p class="choice-sub" id="choiceSub"></p>
+      <div id="choiceOptions" class="choice-options"></div>
+      <div class="mode-row"><button id="choiceCancel" class="btn btn-ghost">Cancel</button></div>
     </div>
   </div>
 
@@ -226,9 +226,9 @@
         <h2>Les rôles</h2>
         <ul class="help-roles">
           <li><b>Sovereign</b> (roi) — bouge d'une case ; encaisse 2 coups mortels.</li>
-          <li><b>Reaper</b> (reine) — glisse dans toutes les directions. Sa <b>Reaping Spiral</b> tue la cible <i>et tous les ennemis adjacents</i>. Au choix : <b>rester</b> et balayer tout autour, ou <b>tuer et avancer</b> sur la case.</li>
+          <li><b>Reaper</b> (reine) — glisse dans toutes les directions. Sa <b>Reaping Spiral</b> tue la cible <i>et tous les ennemis adjacents</i>. Quand tu la fais frapper, une fenêtre te laisse choisir : <b>rester</b> et balayer tout autour, ou <b>tuer et avancer</b> sur la case.</li>
           <li><b>Juggernaut</b> (tour) — frappe en ligne droite.</li>
-          <li><b>Trickster</b> (fou) — clignote en diagonale ; frappe jusqu'à 3 cases en diagonale.</li>
+          <li><b>Trickster</b> (fou) — se déplace de n'importe quelle distance en diagonale et frappe tout le long de la diagonale (jusqu'au premier obstacle).</li>
           <li><b>Wildrider</b> (cavalier) — saut en L par-dessus les obstacles.</li>
           <li><b>Skirmisher</b> (pion) — avance d'une case, frappe en diagonale avant.</li>
           <li><b>Harrower</b> — se téléporte à côté de n'importe quel allié ; son kill entraîne un ennemi voisin de la victime.</li>
@@ -240,7 +240,7 @@
         <p>En phase Stratégie, active <b>Ward</b> puis clique une de tes pièces : elle reçoit un bouclier doré qui reste actif <b>jusqu'à ce qu'il serve</b> (même sur plusieurs rounds). Il absorbe <b>un seul</b> événement mortel — un coup, ou la lave — puis se brise. Si deux ennemis frappent la même pièce dans le même round, le second coup la tue. Reclique la pièce pour retirer le bouclier et récupérer la charge. Cliquer ailleurs quitte le mode Ward.</p>
 
         <h2>Cristaux &amp; invocation</h2>
-        <p><b>10 cristaux</b> par ennemi tué. Enchaîner plusieurs kills dans une même bataille rapporte un <b>bonus SOULS</b>. Clique <b>Summon</b>, choisis un renfort, puis une case vide de ta moitié : <b>20</b> Skirmisher · <b>30</b> Juggernaut/Wildrider/Trickster · <b>40</b> Harrower. Une invocation par choix — tu reprends ensuite la main normalement. <b>Undo</b> annule la dernière action (commande, invocation remboursée, ou bouclier) ; <b>Clear</b> annule tout le tour.</p>
+        <p><b>10 cristaux</b> par ennemi tué. Enchaîner plusieurs kills dans une même bataille rapporte un <b>bonus SOULS</b>. Clique <b>Summon…</b> : une fenêtre te propose les renforts (<b>20</b> Skirmisher · <b>30</b> Juggernaut/Wildrider/Trickster · <b>40</b> Harrower). Choisis-en un puis clique une case vide en surbrillance de ta moitié. Tant que tu n'as pas validé, <b>clique sur une pièce que tu viens d'invoquer</b> pour annuler l'invocation (cristaux remboursés). <b>Undo</b> annule la dernière action (commande, invocation ou bouclier) ; <b>Clear</b> annule tout le tour.</p>
 
         <h2>Replay &amp; Undo</h2>
         <p><b>↻ Replay</b> — rejoue visuellement la dernière bataille (le plateau revient à l'avant-combat, l'action se rejoue, puis retour à ta planification). <b>↺ Undo Round</b> — annule le dernier round résolu et te renvoie à sa planification (le mode « mauvais perdant »).</p>
@@ -295,8 +295,8 @@
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
-<script src="net.js?v=3"></script>
-<script src="game.js?v=3"></script>
-<script src="ai.js?v=3"></script>
+<script src="net.js?v=7"></script>
+<script src="game.js?v=7"></script>
+<script src="ai.js?v=7"></script>
 </body>
 </html>

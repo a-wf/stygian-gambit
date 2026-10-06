@@ -46,7 +46,7 @@
         { type:"sovereign", side:"dark", row:7, col:4, lives:3 }, { type:"reaper", side:"dark", row:6, col:4 }, { type:"juggernaut", side:"dark", row:7, col:3 }, { type:"wildrider", side:"dark", row:6, col:5 } ] },
     { id: "regicide-rush", name: "Regicide Rush", blurb: "Their king marches with a single life. Punch through and behead the line.",
       humanSide: "dark", difficulty: "hard", persona: "butcher", furies: false, aegis: { light: 2, dark: 2 }, crystals: { light: 0, dark: 10 }, winCon: { type: "regicide" },
-      pieces: [ { type:"sovereign", side:"light", row:2, col:4, lives:1 }, { type:"juggernaut", side:"light", row:1, col:3 }, { type:"juggernaut", side:"light", row:1, col:5 }, { type:"trickster", side:"light", row:2, col:2 }, { type:"trickster", side:"light", row:2, col:6 }, { type:"skirmisher", side:"light", row:3, col:4 },
+      pieces: [ { type:"sovereign", side:"light", row:2, col:4, lives:1 }, { type:"juggernaut", side:"light", row:1, col:3 }, { type:"juggernaut", side:"light", row:1, col:5 }, { type:"trickster", side:"light", row:1, col:2 }, { type:"trickster", side:"light", row:1, col:6 }, { type:"skirmisher", side:"light", row:3, col:4 },
         { type:"sovereign", side:"dark", row:7, col:4, lives:3 }, { type:"reaper", side:"dark", row:6, col:4 }, { type:"wildrider", side:"dark", row:6, col:2 }, { type:"wildrider", side:"dark", row:6, col:6 }, { type:"harrower", side:"dark", row:7, col:1 } ] },
   ];
   SG.SCENARIOS = SCENARIOS;
@@ -80,7 +80,7 @@
     sovereign:  { label: "Sovereign", lives: 3, moveKind: "king", attackKind: "melee" },
     reaper:     { label: "Reaper", lives: 2, moveKind: "slide", moveDirs: KING_DIRS, moveSteps: 7, attackKind: "melee", strikeAoe: true },
     juggernaut: { label: "Juggernaut", lives: 1, moveKind: "slide", moveDirs: ROOK_DIRS, moveSteps: 7, attackKind: "ranged", attackDirs: ROOK_DIRS, attackRange: 7 },
-    trickster:  { label: "Trickster", lives: 1, moveKind: "slide", moveDirs: BISHOP_DIRS, moveSteps: 2, attackKind: "ranged", attackDirs: BISHOP_DIRS, attackRange: 3 },
+    trickster:  { label: "Trickster", lives: 1, moveKind: "slide", moveDirs: BISHOP_DIRS, moveSteps: 7, attackKind: "ranged", attackDirs: BISHOP_DIRS, attackRange: 7 },
     wildrider:  { label: "Wildrider", lives: 1, moveKind: "leap", attackKind: "melee" },
     skirmisher: { label: "Skirmisher", lives: 1, moveKind: "pawn", attackKind: "pawnDiag" },
     harrower:   { label: "Harrower", lives: 1, moveKind: "tether", moveRange: 2, attackKind: "melee", strikeChain: true },
@@ -119,7 +119,6 @@
       aegis: { light: AEGIS_START, dark: AEGIS_START },
       crystals: { light: 0, dark: 0 },
       wardMode: false,
-      summonMenuOpen: false,
       summonArmed: null,
       furiesEnabled: false,
       furyCount: 0,
@@ -518,12 +517,11 @@
     const a = state.undoStack.pop();
     if (!a) { state.plan[side].pop(); return; }                    // legacy fallback
     if (a.type === "summon") {
-      const i = state.pieces.findIndex(p => p.id === a.pieceId);
-      if (i >= 0) state.pieces.splice(i, 1);
-      state.crystals[a.side] += a.cost;
-      state.plan[side] = state.plan[side].filter(c => c.pieceId !== a.pieceId);
-      if (!state.isReplay && state.stats[a.side]) state.stats[a.side].summons = Math.max(0, state.stats[a.side].summons - 1);
-      setCaption("Summon undone — crystals refunded.");
+      const p = pieceById(a.pieceId);
+      if (p && p.warded) state.aegis[side] = Math.min(state.aegisMax[side], state.aegis[side] + 1);
+      state.undoStack = state.undoStack.filter(e => e.pieceId !== a.pieceId);
+      removeSummoned(a);
+      setCaption(`Summon undone — ${refundNote(a.cost, pruneStaleMoves(side))}`);
     } else if (a.type === "command") {
       state.plan[side] = state.plan[side].filter(c => c.pieceId !== a.pieceId);
     } else if (a.type === "commandEdit") {
@@ -539,8 +537,17 @@
     }
   }
 
+  // Per-turn UI leftovers that must never carry over to the next planner (hotseat secrecy, stale refunds).
+  function resetTurnTransients() {
+    state.planNote = null; state.planNoteUntil = 0;
+    clearTimeout(planNoteTimer);
+    closeChoice();
+  }
+
   function onValidate() {
     if (state.scene !== "planning") return;
+    if (choiceOpen()) return;                       // a pending choice must be answered or cancelled first
+    resetTurnTransients();
     if (state.mode === "online") {
       if (state.onlineWaiting) return;
       const side = state.humanSide;
@@ -548,7 +555,7 @@
       SG.Net.submitPlan(state.roundNumber, buildMyPacket());
       state.onlineWaiting = true;
       clearSelection();
-      state.wardMode = false; state.summonMenuOpen = false; state.summonArmed = null; state.pendingReaperStrike = null;
+      state.wardMode = false; state.summonArmed = null; state.pendingReaperStrike = null;
       updatePlanBar(); refreshBanner();
       return;
     }
@@ -556,7 +563,6 @@
     state.planLocked[side] = true;
     clearSelection();
     state.wardMode = false;
-    state.summonMenuOpen = false;
     state.summonArmed = null;
     state.pendingReaperStrike = null;
     const ts = state.lastTs;
@@ -575,6 +581,7 @@
   }
 
   function showHandoff(nextSide) {
+    resetTurnTransients();
     state.scene = "handoff";
     dom.handoffTitle.textContent = "PASS THE DEVICE";
     dom.handoffText.textContent = `Hand over to ${sideLabel(nextSide)}. Their plan stays secret.`;
@@ -589,8 +596,8 @@
     state.handoffTo = null;
     state.scene = "planning";
     state.undoStack = [];          // the next side's turn — the previous side's plan is locked in
+    resetTurnTransients();
     state.wardMode = false;
-    state.summonMenuOpen = false;
     state.summonArmed = null;
     state.pendingReaperStrike = null;
     clearSelection();
@@ -606,8 +613,8 @@
     state.planningSide = (state.mode === "bot" || state.mode === "online") ? state.humanSide : "light";
     state.onlineWaiting = false;
     state.undoStack = [];
+    state.planNote = null; state.planNoteUntil = 0;
     state.wardMode = false;
-    state.summonMenuOpen = false;
     state.summonArmed = null;
     state.pendingReaperStrike = null;
     state.battle = null;
@@ -636,12 +643,10 @@
     }
     clearSelection();
     state.wardMode = false;
-    state.summonMenuOpen = false;
     state.summonArmed = null;
     state.pendingReaperStrike = null;
     dom.planBar.classList.add("hidden");
-    dom.summonRow.classList.add("hidden");
-    dom.reaperChoice.classList.add("hidden");
+    closeChoice();
     // Hermes' Haste overrides initiative for the side that holds it.
     let fs = state.firstSide;
     if (hasBoon("light", "hermes") && !hasBoon("dark", "hermes")) fs = "light";
@@ -1092,6 +1097,7 @@
   }
   function onlineOpponentLeft() {
     if (state.mode !== "online") return;
+    closeChoice();
     state.onlineWaiting = false;
     if (dom.onlineStatus) dom.onlineStatus.innerHTML = "<b>Opponent disconnected.</b> The duel cannot continue.";
     if (dom.onlineSetup) dom.onlineSetup.classList.remove("hidden");
@@ -1854,23 +1860,22 @@
   }
 
   // Draw each role's figure into its legend icon canvas on the start screen.
+  function paintIcon(cv, type, side) {
+    const lc = cv.getContext("2d");
+    const w = cv.width, h = cv.height, r = w * 0.30;
+    lc.clearRect(0, 0, w, h);
+    const colors = glyphColor(side), pal = sidePalette(side);
+    lc.save();
+    lc.translate(w / 2, h * 0.56);
+    const halo = lc.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 1.7);
+    halo.addColorStop(0, hexToRgba(colors.glow, 0.4)); halo.addColorStop(1, hexToRgba(colors.glow, 0));
+    lc.fillStyle = halo; lc.beginPath(); lc.arc(0, 0, r * 1.7, 0, Math.PI * 2); lc.fill();
+    paintFigure(type, pal, r, 0, lc);
+    lc.restore();
+  }
   function buildLegendIcons() {
-    const icons = document.querySelectorAll(".legend-icon");
-    icons.forEach(cv => {
-      const type = cv.getAttribute("data-piece");
-      const side = cv.getAttribute("data-side") || "light";
-      const lc = cv.getContext("2d");
-      const w = cv.width, h = cv.height, r = w * 0.30;
-      lc.clearRect(0, 0, w, h);
-      const colors = glyphColor(side), pal = sidePalette(side);
-      lc.save();
-      lc.translate(w / 2, h * 0.56);
-      const halo = lc.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 1.7);
-      halo.addColorStop(0, hexToRgba(colors.glow, 0.4)); halo.addColorStop(1, hexToRgba(colors.glow, 0));
-      lc.fillStyle = halo; lc.beginPath(); lc.arc(0, 0, r * 1.7, 0, Math.PI * 2); lc.fill();
-      paintFigure(type, pal, r, 0, lc);
-      lc.restore();
-    });
+    document.querySelectorAll(".legend-icon").forEach(cv =>
+      paintIcon(cv, cv.getAttribute("data-piece"), cv.getAttribute("data-side") || "light"));
   }
 
   function drawSlashes(ts) {
@@ -1970,8 +1975,8 @@
    * ============================================================ */
   const dom = {};
   ["startScreen","hud","gameOverScreen","planBar","planLabel","btnWard","btnUndo","btnClear","btnValidate",
-   "btnSummon","summonRow","summonBtns","summonHint","crystalLight","crystalDark",
-   "reaperChoice","reaperSpiral","reaperAdvance","btnReplay","btnRevert","btnThreat","btnForesight",
+   "btnSummon","crystalLight","crystalDark",
+   "btnReplay","btnRevert","btnThreat","btnForesight","choiceScreen","choiceTitle","choiceSub","choiceOptions","choiceCancel",
    "btnHotseat","btnVsBot","btnPlayAgain","btnMainMenu","btnMute","btnQuit","turnBanner","eventLog","winnerHeadline","furyToggle","hazardToggle",
    "aegisLight","aegisDark","royalLight","royalDark","countLight","countDark",
    "handoffScreen","handoffTitle","handoffText","btnHandoffReady",
@@ -1988,17 +1993,31 @@
     const div = document.createElement("div"); div.textContent = text; div.className = "log-enter";
     dom.eventLog.appendChild(div); dom.eventLog.scrollTop = dom.eventLog.scrollHeight;
   }
-  function setCaption(text) { state.caption = text; if (state.scene === "battle") refreshBanner(); }
+  // In battle the caption narrates the fight; in planning it's a short-lived note
+  // (e.g. "Only 3 pieces may act each round") that used to be silently dropped.
+  let planNoteTimer = null;
+  function setCaption(text) {
+    state.caption = text;
+    if (state.scene === "battle") { refreshBanner(); return; }
+    if (state.scene === "planning" && text) {
+      state.planNote = text; state.planNoteUntil = performance.now() + 2600;
+      refreshBanner();
+      clearTimeout(planNoteTimer); planNoteTimer = setTimeout(refreshBanner, 2650);
+    }
+  }
 
   function refreshBanner() {
     if (!dom.turnBanner) return;
-    let txt = "";
+    let txt = "", note = false;
     const chamber = state.run && state.run.active ? `${CHAMBERS[state.run.chamber].name} (${state.run.chamber + 1}/${CHAMBERS.length}) · ` : "";
     if (state.scene === "planning" && state.mode === "online" && state.onlineWaiting) txt = "⏳ Plan committed — waiting for your opponent…";
+    else if (state.scene === "planning" && state.planNote && performance.now() < (state.planNoteUntil || 0)) { txt = state.planNote; note = true; }
+    else if (state.scene === "planning" && state.summonArmed) { txt = `Place your ${PIECE_DEFS[state.summonArmed].label} on a highlighted tile · click elsewhere to cancel`; note = true; }
     else if (state.scene === "planning") txt = `${chamber}${sideLabel(state.planningSide)} — plan in secret · Round ${state.roundNumber + 1} · ${sideLabel(state.firstSide)} resolves first`;
     else if (state.scene === "battle") txt = (state.isReplay ? "↻ REPLAY · " : "") + (state.caption || "Battle!");
     else if (state.scene === "handoff") txt = "Pass the device…";
     dom.turnBanner.textContent = txt;
+    dom.turnBanner.classList.toggle("note", note);
     dom.turnBanner.classList.toggle("side-light", state.planningSide === "light");
     dom.turnBanner.classList.toggle("side-dark", state.planningSide === "dark");
   }
@@ -2034,47 +2053,150 @@
     dom.countDark.textContent = state.pieces.filter(p => p.alive && p.side === "dark").length;
   }
 
-  function updateSummonUI() {
-    const open = state.scene === "planning" && state.summonMenuOpen;
-    dom.summonRow.classList.toggle("hidden", !open);
-    dom.btnSummon.classList.toggle("ward-on", state.summonMenuOpen);
-    if (!open) return;
-    const side = state.planningSide;
-    SUMMON_OPTIONS.forEach((o, i) => {
-      const btn = summonBtnEls[i];
-      if (!btn) return;
-      btn.textContent = `${o.label} · ${o.cost}`;
-      btn.disabled = state.crystals[side] < o.cost;
-      btn.classList.toggle("armed", state.summonArmed === o.type);
-    });
-    dom.summonHint.textContent = state.summonArmed
-      ? `Place your ${PIECE_DEFS[state.summonArmed].label} on an empty tile in your half.`
-      : `Crystals: ${state.crystals[side]} — choose a reinforcement:`;
+  /* ---- Choice pop-up: every moment the player must pick between options ---- */
+  let choiceCancelFn = null;
+  let choiceClosedAt = 0;          // swallow the 2nd click of a double-click that lands on the board
+  function choiceOpen() { return dom.choiceScreen && !dom.choiceScreen.classList.contains("hidden"); }
+  function openChoice(opts) {
+    dom.choiceTitle.textContent = opts.title;
+    dom.choiceSub.innerHTML = opts.sub || "";
+    dom.choiceOptions.innerHTML = "";
+    for (const o of opts.options) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "choice-card btn btn-ghost";
+      b.disabled = !!o.disabled;
+      if (o.icon) {
+        const cv = document.createElement("canvas");
+        cv.width = 52; cv.height = 52; cv.className = "choice-icon";
+        paintIcon(cv, o.icon.type, o.icon.side);
+        b.appendChild(cv);
+      }
+      const t = document.createElement("span");
+      t.className = "choice-text";
+      t.innerHTML = `<span class="choice-label">${o.label}</span>${o.desc ? `<span class="choice-desc">${o.desc}</span>` : ""}`;
+      b.appendChild(t);
+      if (o.badge) { const g = document.createElement("span"); g.className = "choice-badge"; g.textContent = o.badge; b.appendChild(g); }
+      b.addEventListener("click", () => { closeChoice(); o.onPick(); });
+      dom.choiceOptions.appendChild(b);
+    }
+    dom.choiceCancel.textContent = opts.cancelLabel || "Cancel";
+    choiceCancelFn = opts.onCancel || null;
+    dom.choiceScreen.classList.remove("hidden");
+    if (dom.hud) dom.hud.inert = true;             // board + plan bar unreachable (mouse and keyboard) while choosing
+    const first = dom.choiceOptions.querySelector("button:not(:disabled)") || dom.choiceCancel;
+    first.focus();
   }
+  function closeChoice() {
+    if (choiceOpen()) choiceClosedAt = performance.now();
+    if (dom.choiceScreen) dom.choiceScreen.classList.add("hidden");
+    if (dom.hud) dom.hud.inert = false;
+    choiceCancelFn = null;
+  }
+  function cancelChoice() { const fn = choiceCancelFn; closeChoice(); if (fn) fn(); }
 
-  const summonBtnEls = [];
-  function buildSummonButtons() {
-    if (!dom.summonBtns) return;
-    dom.summonBtns.innerHTML = "";
-    summonBtnEls.length = 0;
-    SUMMON_OPTIONS.forEach(o => {
-      const btn = document.createElement("button");
-      btn.className = "btn btn-ghost";
-      btn.addEventListener("click", () => {
-        if (state.scene !== "planning") return;
-        if (state.crystals[state.planningSide] < o.cost) return;
-        state.summonArmed = state.summonArmed === o.type ? null : o.type;
-        clearSelection();
-        updatePlanBar();
-      });
-      dom.summonBtns.appendChild(btn);
-      summonBtnEls.push(btn);
+  const SUMMON_DESC = {
+    skirmisher: "Steps forward, kills on the forward diagonals.",
+    juggernaut: "Lances any foe down a straight line.",
+    wildrider: "Knight's leap over blockers; slays an adjacent foe.",
+    trickster: "Glides any distance along the diagonals and strikes down them.",
+    harrower: "Teleports beside an ally; its kill drags down a second foe.",
+  };
+  function openSummonChoice() {
+    const side = state.planningSide, have = state.crystals[side];
+    const room = homeTilesFor(side).length > 0;
+    openChoice({
+      title: "Summon a reinforcement",
+      sub: `You have <b>${have}◆</b>. ${room ? "Pick one, then click an empty highlighted tile in your half." : "<b>No empty tile left in your half.</b>"}`
+        + ` Until you validate, click a fresh summon to cancel it and get the crystals back.`,
+      options: SUMMON_OPTIONS.map(o => ({
+        icon: { type: o.type, side }, label: o.label, desc: SUMMON_DESC[o.type], badge: `${o.cost}◆`,
+        disabled: !room || have < o.cost,
+        onPick: () => { state.summonArmed = o.type; clearSelection(); updatePlanBar(); },
+      })),
     });
+  }
+  function openReaperChoice() {
+    const pend = state.pendingReaperStrike;
+    const reaper = pend && pieceById(pend.pieceId), target = pend && pieceById(pend.targetId);
+    if (!reaper || !target) { cancelReaperChoice(); return; }
+    const radius = hasBoon(reaper.side, "ares") ? 2 : 1;
+    const inReach = state.pieces.filter(o => o.alive && o.side !== reaper.side && chebyshev(reaper, o) <= radius).length;
+    openChoice({
+      title: "The Reaper's strike",
+      sub: `Target: <b>${describePiece(target)}</b>. Allies are never hit.`,
+      options: [
+        { icon: { type: "reaper", side: reaper.side }, label: "Reaping Spiral",
+          desc: `Hold her ground and slay every foe ${radius === 2 ? "within 2 tiles" : "adjacent to her"} when she acts — ${inReach} in reach right now.`,
+          onPick: () => commitReaperStrike("spiral") },
+        { icon: { type: target.type, side: target.side }, label: "Slay & Advance",
+          desc: `Kill the ${PIECE_DEFS[target.type].label} and step onto its square.`,
+          onPick: () => commitReaperStrike("advance") },
+      ],
+      onCancel: () => cancelReaperChoice(),
+    });
+  }
+  function summonedThisTurn(p) { return !!p && state.undoStack.some(a => a.type === "summon" && a.pieceId === p.id); }
+  function openSummonedChoice(p) {
+    const entry = state.undoStack.find(a => a.type === "summon" && a.pieceId === p.id);
+    const label = PIECE_DEFS[p.type].label;
+    const canOrder = state.mode !== "online";
+    const options = [{
+      icon: { type: p.type, side: p.side }, label: "Cancel this summon",
+      desc: `Remove the ${label} and refund ${entry ? entry.cost : 0}◆${p.warded ? " plus its Aegis" : ""}.`,
+      onPick: () => cancelSummon(p.id),
+    }];
+    if (canOrder) options.push({ label: "Give it an order", desc: "Select it to move or strike this round.", onPick: () => selectPiece(p) });
+    openChoice({
+      title: `Fresh ${label}`,
+      sub: canOrder ? "Summoned this turn — nothing is final until you validate."
+                    : "Summoned this turn. Online, a new piece can only act from next round.",
+      options, cancelLabel: "Keep it",
+    });
+  }
+  // Take back a summon placed this turn (any order, not only the latest action).
+  function removeSummoned(entry) {
+    const i = state.pieces.findIndex(p => p.id === entry.pieceId);
+    if (i >= 0) state.pieces.splice(i, 1);
+    state.crystals[entry.side] += entry.cost;
+    state.plan[state.planningSide] = state.plan[state.planningSide].filter(c => c.pieceId !== entry.pieceId);
+    if (!state.isReplay && state.stats[entry.side]) state.stats[entry.side].summons = Math.max(0, state.stats[entry.side].summons - 1);
+  }
+  // When a piece leaves the board mid-plan, an order may have relied on it (a Harrower teleports
+  // beside an ally). Drop orders that are no longer legal instead of letting them fizzle in battle.
+  function pruneStaleMoves(side) {
+    const grid = buildOccupancyGrid(state.pieces);
+    const stale = new Set(state.plan[side].filter(c => {
+      if (c.kind !== "move") return false;
+      const q = pieceById(c.pieceId);
+      return !q || !getMoveTiles(q, grid).some(t => t.row === c.row && t.col === c.col);
+    }).map(c => c.pieceId));
+    if (!stale.size) return 0;
+    state.plan[side] = state.plan[side].filter(c => !stale.has(c.pieceId));
+    state.undoStack = state.undoStack.filter(a => !((a.type === "command" || a.type === "commandEdit") && stale.has(a.pieceId)));
+    return stale.size;
+  }
+  function refundNote(cost, dropped) {
+    return `${cost}◆ refunded${dropped ? ` · ${dropped} order${dropped > 1 ? "s" : ""} that needed it removed` : ""}.`;
+  }
+  function cancelSummon(pieceId) {
+    const side = state.planningSide;
+    const entry = state.undoStack.find(a => a.type === "summon" && a.pieceId === pieceId);
+    if (!entry) return;
+    const p = pieceById(pieceId);
+    if (p && p.warded) {
+      state.aegis[side] = Math.min(state.aegisMax[side], state.aegis[side] + 1);
+      if (state.stats[side]) state.stats[side].aegisUsed = Math.max(0, state.stats[side].aegisUsed - 1);
+    }
+    state.undoStack = state.undoStack.filter(a => a.pieceId !== pieceId);   // its ward / order entries go too
+    removeSummoned(entry);
+    setCaption(`Summon cancelled — ${refundNote(entry.cost, pruneStaleMoves(side))}`);
+    clearSelection(); syncSidePanels(); updatePlanBar();
   }
 
   function updatePlanBar() {
-    if (state.scene !== "planning") { dom.planBar.classList.add("hidden"); dom.summonRow.classList.add("hidden"); return; }
-    if (state.mode === "online" && state.onlineWaiting) { dom.planBar.classList.add("hidden"); dom.summonRow.classList.add("hidden"); dom.reaperChoice.classList.add("hidden"); return; }
+    if (state.scene !== "planning") { dom.planBar.classList.add("hidden"); return; }
+    if (state.mode === "online" && state.onlineWaiting) { dom.planBar.classList.add("hidden"); closeChoice(); refreshBanner(); return; }
     dom.planBar.classList.remove("hidden");
     const side = state.planningSide;
     const used = new Set(state.plan[side].map(c => c.pieceId)).size;
@@ -2089,8 +2211,9 @@
     }
     if (dom.btnThreat) { dom.btnThreat.textContent = state.showThreat ? "Doom Sight: On" : "Doom Sight: Off"; dom.btnThreat.classList.toggle("ward-on", state.showThreat); }
     if (dom.btnForesight) { dom.btnForesight.textContent = state.foresightOn ? "Foresight: On" : "Foresight: Off"; dom.btnForesight.classList.toggle("ward-on", state.foresightOn); }
-    updateSummonUI();
-    dom.reaperChoice.classList.toggle("hidden", !state.pendingReaperStrike);
+    dom.btnSummon.classList.toggle("ward-on", !!state.summonArmed);
+    dom.btnSummon.textContent = state.summonArmed ? `Placing ${PIECE_DEFS[state.summonArmed].label}…` : "Summon…";
+    refreshBanner();
   }
 
   /* ---- Replay the last clash (visual re-run) ---- */
@@ -2106,8 +2229,7 @@
     state.isReplay = true;
     clearSelection();
     dom.planBar.classList.add("hidden");
-    dom.summonRow.classList.add("hidden");
-    dom.reaperChoice.classList.add("hidden");
+    closeChoice();
     beginBattle(state.lastTs);
   }
 
@@ -2123,8 +2245,10 @@
     state.plan = { light: [], dark: [] };
     state.planLocked = { light: false, dark: false };
     state.lastBattle = null;
-    state.wardMode = false; state.summonMenuOpen = false; state.summonArmed = null;
+    state.wardMode = false; state.summonArmed = null;
     state.pendingReaperStrike = null;
+    state.undoStack = [];                                   // that turn's actions belong to the discarded timeline
+    resetTurnTransients();
     state.scene = "planning";
     state.planningSide = state.mode === "bot" ? state.humanSide : "light";
     clearSelection();
@@ -2159,6 +2283,7 @@
 
   canvas.addEventListener("click", (evt) => {
     if (state.scene !== "planning") return;
+    if (choiceOpen() || performance.now() - choiceClosedAt < 350) return;   // stray click from the pop-up
     // in bot mode, only the human side plans manually
     if (state.mode === "bot" && state.planningSide !== state.humanSide) return;
     if (state.mode === "online" && state.onlineWaiting) return; // already committed this round
@@ -2202,32 +2327,41 @@
           state.pendingReaperStrike = { pieceId: piece.id, targetId: clicked.id, row: cell.row, col: cell.col };
           clearSelection();
           updatePlanBar();
+          openReaperChoice();                       // pop-up: Reaping Spiral or Slay & Advance
         } else if (addPlanCommand({ pieceId: piece.id, kind: "strike", targetId: clicked.id, row: cell.row, col: cell.col })) {
           clearSelection(); updatePlanBar();
         }
         return;
       }
-      if (clicked && isPlanControllable(clicked) && onlineSelectable(clicked)) { selectPiece(clicked); return; }
+      if (clicked && isPlanControllable(clicked)) { clearSelection(); pickOwnPiece(clicked); return; }
       clearSelection();
       return;
     }
-    if (clicked && isPlanControllable(clicked)) {
-      if (!onlineSelectable(clicked)) { setCaption("A summoned piece must wait a round before it can act."); return; }
-      selectPiece(clicked);
-    }
+    if (clicked && isPlanControllable(clicked)) pickOwnPiece(clicked);
   });
 
-  dom.btnWard.addEventListener("click", () => { if (state.scene !== "planning") return; state.wardMode = !state.wardMode; if (state.wardMode) { state.summonMenuOpen = false; state.summonArmed = null; } clearSelection(); updatePlanBar(); });
+  // Clicking one of your pieces: a piece summoned this turn offers to cancel the summon; others get selected.
+  function pickOwnPiece(p) {
+    if (summonedThisTurn(p)) { openSummonedChoice(p); return; }
+    if (!onlineSelectable(p)) { setCaption("A summoned piece must wait a round before it can act."); return; }
+    selectPiece(p);
+  }
+
+  dom.btnWard.addEventListener("click", () => { if (planningLocked()) return; state.wardMode = !state.wardMode; if (state.wardMode) { state.summonArmed = null; } clearSelection(); updatePlanBar(); });
   dom.btnSummon.addEventListener("click", () => {
-    if (state.scene !== "planning") return;
-    state.summonMenuOpen = !state.summonMenuOpen;
-    if (state.summonMenuOpen) state.wardMode = false; else state.summonArmed = null;
-    clearSelection();
-    updatePlanBar();
+    if (planningLocked()) return;
+    const wasArmed = !!state.summonArmed;
+    state.wardMode = false; state.summonArmed = null;
+    clearSelection(); updatePlanBar();
+    if (!wasArmed) openSummonChoice();          // clicking while placing simply cancels the placement
   });
-  buildSummonButtons();
-  dom.reaperSpiral.addEventListener("click", () => commitReaperStrike("spiral"));
-  dom.reaperAdvance.addEventListener("click", () => commitReaperStrike("advance"));
+  dom.choiceCancel.addEventListener("click", () => cancelChoice());
+  dom.choiceScreen.addEventListener("click", (e) => { if (e.target === dom.choiceScreen) cancelChoice(); });  // backdrop
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (choiceOpen()) { cancelChoice(); return; }
+    if (state.scene === "planning" && state.summonArmed) { state.summonArmed = null; updatePlanBar(); }
+  });
   if (dom.btnReplay) dom.btnReplay.addEventListener("click", () => replayLastRound());
   if (dom.btnRevert) dom.btnRevert.addEventListener("click", () => revertRound());
   if (dom.btnThreat) dom.btnThreat.addEventListener("click", () => { if (state.scene !== "planning") return; state.showThreat = !state.showThreat; updatePlanBar(); });
@@ -2349,7 +2483,7 @@
   });
   if (dom.btnMirror) dom.btnMirror.addEventListener("click", () => { refreshMirror(); dom.mirrorScreen.classList.remove("hidden"); });
   if (dom.btnMirrorClose) dom.btnMirrorClose.addEventListener("click", () => dom.mirrorScreen.classList.add("hidden"));
-  function planningLocked() { return state.scene !== "planning" || (state.mode === "online" && state.onlineWaiting); }
+  function planningLocked() { return state.scene !== "planning" || choiceOpen() || (state.mode === "online" && state.onlineWaiting); }
   dom.btnUndo.addEventListener("click", () => {
     if (planningLocked()) return;
     undoLast(); clearSelection(); syncSidePanels(); updatePlanBar();
@@ -2404,8 +2538,7 @@
     dom.gameOverScreen.classList.add("hidden");
     dom.handoffScreen.classList.add("hidden");
     dom.planBar.classList.add("hidden");
-    dom.summonRow.classList.add("hidden");
-    dom.reaperChoice.classList.add("hidden");
+    closeChoice();
     if (dom.boonScreen) dom.boonScreen.classList.add("hidden");
     if (dom.mirrorScreen) dom.mirrorScreen.classList.add("hidden");
     if (dom.trialsScreen) dom.trialsScreen.classList.add("hidden");
