@@ -2314,6 +2314,7 @@
     if (dom.btnBid) {
       const bid = (state.crystalBid && state.crystalBid[side]) || 0;
       dom.btnBid.textContent = t("btn.bid", { n: bid });
+      dom.btnBid.title = t("title.bid");
       dom.btnBid.classList.toggle("ward-on", bid > 0);
     }
     refreshBanner();

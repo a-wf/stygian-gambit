@@ -89,6 +89,7 @@ window.SG.I18N_DICT.zh = {
   "title.revert": "撤销上一个已结算的回合",
   "title.revertOnline": "联机模式不可用——双方共享同一条时间线",
   "title.options": "选项",
+  "title.bid": "投入水晶竞价以抢夺先手（出价高者先动）",
   "btn.mute": "静音",
   "btn.unmute": "取消静音",
   "btn.bid": "先手：{n}◆",

@@ -88,6 +88,7 @@ window.SG.I18N_DICT.fr = {
   "title.revert": "Défaire le dernier round résolu",
   "title.revertOnline": "Indisponible en ligne — les deux joueurs partagent la même chronologie",
   "title.options": "Options",
+  "title.bid": "Miser des cristaux pour forcer l'ordre de jeu (le plus offrant joue en premier)",
   "btn.mute": "Couper le son",
   "btn.unmute": "Activer le son",
   "btn.bid": "Initiative : {n}◆",

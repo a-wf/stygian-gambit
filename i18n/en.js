@@ -90,6 +90,7 @@ window.SG.I18N_DICT.en = {
   "title.revert": "Undo the last resolved round",
   "title.revertOnline": "Not available online — both players share one timeline",
   "title.options": "Options",
+  "title.bid": "Bid crystals to force move order (highest bidder acts first)",
   "btn.mute": "Mute",
   "btn.unmute": "Unmute",
   "btn.bid": "Initiative: {n}◆",
