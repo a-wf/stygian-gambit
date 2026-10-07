@@ -37,6 +37,15 @@
       <label class="fury-option hazard-option"><input type="checkbox" id="hazardToggle"> <span data-i18n-html="start.hazards"></span></label>
 
       <div class="bot-options">
+        <label><span data-i18n="start.movesPerRound">Moves per round</span>
+          <select id="movesPerRound">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3" selected>3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+          </select>
+        </label>
         <label><span data-i18n="start.difficulty">Difficulty</span>
           <select id="difficulty">
             <option value="easy" data-i18n="difficulty.easy">Easy</option>
@@ -86,6 +95,7 @@
       <span id="planLabel">—</span>
       <span class="plan-spacer"></span>
       <button id="btnSummon" class="btn btn-ghost" data-i18n="btn.summon">Summon…</button>
+      <button id="btnBid" class="btn btn-ghost">Initiative: 0◆</button>
       <button id="btnWard" class="btn btn-ghost">Ward: Off</button>
       <button id="btnThreat" class="btn btn-ghost" data-i18n-title="title.threat">Doom Sight: Off</button>
       <button id="btnForesight" class="btn btn-ghost" data-i18n-title="title.foresight">Foresight: Off</button>
@@ -194,6 +204,7 @@
           <input type="range" id="optSpeed" min="0.5" max="2" step="0.25" value="1">
           <b id="optSpeedVal">1×</b>
         </label>
+        <label class="opt-row"><input type="checkbox" id="optMute"> <span data-i18n="options.mute">Mute sound</span></label>
         <label class="opt-row"><input type="checkbox" id="optReduceMotion"> <span data-i18n="options.reduceMotion">Reduce motion (no screenshake, flash or zoom)</span></label>
         <label class="opt-row"><input type="checkbox" id="optColorGlyphs"> <span data-i18n="options.glyphs">Colorblind side glyphs (▲ Umbra / ▽ Ember)</span></label>
       </div>

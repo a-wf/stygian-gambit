@@ -110,6 +110,7 @@
       scene: "start",           // start | planning | handoff | battle | gameover
       mode: "hotseat",
       humanSide: "light",
+      movesPerRound: 3,
       pieces: [],
       roundNumber: 0,
       firstSide: "light",       // resolves first this round (alternates)
@@ -118,6 +119,7 @@
       planLocked: { light: false, dark: false },
       aegis: { light: AEGIS_START, dark: AEGIS_START },
       crystals: { light: 0, dark: 0 },
+      crystalBid: { light: 0, dark: 0 },
       wardMode: false,
       summonArmed: null,
       furiesEnabled: false,
@@ -181,7 +183,7 @@
       const facing = d.side === "light" ? 1 : -1;
       const p = makePiece(d.type, d.side, d.row, d.col, facing);
       if (d.lives != null) p.lives = Math.min(d.lives, p.maxLives);
-      if (d.warded) p.warded = true;
+      if (d.warded && p.type !== "sovereign" && p.type !== "reaper") p.warded = true;
       pieces.push(p);
     }
     return pieces;
@@ -207,10 +209,11 @@
     return {
       pieces: state.pieces.map(clonePieceDurable),
       crystals: { light: state.crystals.light, dark: state.crystals.dark },
+      crystalBid: { light: state.crystalBid.light, dark: state.crystalBid.dark },
       aegis: { light: state.aegis.light, dark: state.aegis.dark },
       furiesEnabled: state.furiesEnabled, furyCount: state.furyCount,
       roundNumber: state.roundNumber, firstSide: state.firstSide, planningSide: state.planningSide,
-      humanSide: state.humanSide, mode: state.mode, nextPieceId: nextPieceId,
+      humanSide: state.humanSide, mode: state.mode, movesPerRound: state.movesPerRound, nextPieceId: nextPieceId,
     };
   }
   function pieceFromDurable(d) {
@@ -227,10 +230,12 @@
   function loadSnapshotPieces(snap) {
     state.pieces = snap.pieces.map(pieceFromDurable);
     state.crystals = { light: snap.crystals.light, dark: snap.crystals.dark };
+    state.crystalBid = snap.crystalBid ? { light: snap.crystalBid.light, dark: snap.crystalBid.dark } : { light: 0, dark: 0 };
     state.aegis = { light: snap.aegis.light, dark: snap.aegis.dark };
     state.furiesEnabled = snap.furiesEnabled; state.furyCount = snap.furyCount;
     state.roundNumber = snap.roundNumber; state.firstSide = snap.firstSide; state.planningSide = snap.planningSide;
     state.humanSide = snap.humanSide; state.mode = snap.mode;
+    if (snap.movesPerRound != null) state.movesPerRound = snap.movesPerRound;
     nextPieceId = snap.nextPieceId;
     state.particles = []; state.slashes = []; state.projectiles = []; state.shockwaves = []; state.damageNumbers = [];
     state.flash = 0; state.shake = 0; state.zoom = 0; state.pendingBeat = 0;
@@ -272,7 +277,7 @@
 
   function hasBoon(side, id) { return !!(state.boons && state.boons[side] && state.boons[side][id]); }
   function crystalsPerKill(side) { return CRYSTALS_PER_KILL + (hasBoon(side, "charon") ? 5 : 0); }
-  function maxCmdFor(side) { return MAX_CMD + (hasBoon(side, "nyx") ? 1 : 0); }
+  function maxCmdFor(side) { const base = (state && state.movesPerRound != null) ? state.movesPerRound : MAX_CMD; return base + (hasBoon(side, "nyx") ? 1 : 0); }
   SG.hasBoon = hasBoon;
 
   function buildOccupancyGrid(pieces) {
@@ -501,6 +506,10 @@
   function toggleWard(piece) {
     const side = state.planningSide;
     if (piece.side !== side) return;
+    if (piece.type === "sovereign" || piece.type === "reaper") {
+      setCaption(t("note.noRoyalWard"));
+      return;
+    }
     if (piece.warded) {
       piece.warded = false;
       state.aegis[side] = Math.min(state.aegisMax[side], state.aegis[side] + 1);  // never exceed the match's charges
@@ -573,7 +582,7 @@
     if (state.mode === "bot") {
       // the human just planned their side; the bot plans the other side, then battle
       const botSide = otherSide(state.humanSide);
-      applyAIPlan(botSide);
+      applyAIPlan(botSide, state.difficulty);
       state.planLocked[botSide] = true;
       beginBattle(ts);
     } else if (side === "light") {
@@ -617,6 +626,7 @@
     state.planningSide = (state.mode === "bot" || state.mode === "online") ? state.humanSide : "light";
     state.onlineWaiting = false;
     state.undoStack = [];
+    state.crystalBid = { light: 0, dark: 0 };
     state.planNote = null; state.planNoteUntil = 0;
     state.wardMode = false;
     state.summonArmed = null;
@@ -655,6 +665,33 @@
     let fs = state.firstSide;
     if (hasBoon("light", "hermes") && !hasBoon("dark", "hermes")) fs = "light";
     else if (hasBoon("dark", "hermes") && !hasBoon("light", "hermes")) fs = "dark";
+    const bidLight = (state.crystalBid && state.crystalBid.light) || 0;
+    const bidDark = (state.crystalBid && state.crystalBid.dark) || 0;
+    if (bidLight > bidDark) {
+      fs = "light";
+      state.crystals.light = Math.max(0, state.crystals.light - bidLight);
+      logEvent(t("log.bidWon", { side: sideLabel("light"), bid: bidLight }));
+      if (bidDark > 0) {
+        const loserPaid = Math.round(bidDark * 0.7);
+        state.crystals.dark = Math.max(0, state.crystals.dark - loserPaid);
+        if (loserPaid > 0) logEvent(t("log.bidLoser", { side: sideLabel("dark"), paid: loserPaid }));
+      }
+    } else if (bidDark > bidLight) {
+      fs = "dark";
+      state.crystals.dark = Math.max(0, state.crystals.dark - bidDark);
+      logEvent(t("log.bidWon", { side: sideLabel("dark"), bid: bidDark }));
+      if (bidLight > 0) {
+        const loserPaid = Math.round(bidLight * 0.7);
+        state.crystals.light = Math.max(0, state.crystals.light - loserPaid);
+        if (loserPaid > 0) logEvent(t("log.bidLoser", { side: sideLabel("light"), paid: loserPaid }));
+      }
+    } else if (bidLight > 0) {
+      const paid = Math.round(bidLight * 0.7);
+      state.crystals.light = Math.max(0, state.crystals.light - paid);
+      state.crystals.dark = Math.max(0, state.crystals.dark - paid);
+      logEvent(t("log.bidTie", { bid: bidLight, side: sideLabel(fs), paid }));
+    }
+    syncSidePanels();
     const ss = otherSide(fs);
     const A = state.plan[fs], B = state.plan[ss];
     const queue = [];
@@ -755,7 +792,16 @@
         state.flash = Math.min(1, state.flash + 0.2);
         setCaption(t("cap.spiral", { who: describePiece(piece) }));
         bumpStat(piece.side, "spirals");
-        for (const o of foes) { spawnSlash(piece, o, ts, "big"); strikeKill(o, piece, ts); }
+        for (const o of foes) {
+          if (Math.random() < 0.5) {
+            spawnSlash(piece, o, ts, "normal");
+            spawnDamageText(o.x, o.y - 6, t("fx.dodged"), "#9a8fb0");
+            audio.dash();
+          } else {
+            spawnSlash(piece, o, ts, "big");
+            strikeKill(o, piece, ts);
+          }
+        }
       } else {
         setCaption(t("cap.spiralMiss", { who: describePiece(piece) }));
       }
@@ -802,7 +848,7 @@
     // Harrower drags down a foe beside the victim.
     if (defs.strikeChain && !target.alive) {
       const g2 = buildOccupancyGrid(state.pieces);
-      for (const [dr, dc] of KING_DIRS) {
+      for (const [dr, dc] of ROOK_DIRS) {
         const r = tRow + dr, c = tCol + dc;
         if (!inBounds(r, c)) continue;
         const o = g2[r][c];
@@ -1053,6 +1099,10 @@
     state.reduceMotion = o.reduceMotion || false;
     state.battleSpeed = o.battleSpeed || 1;
     state.colorGlyphs = o.colorGlyphs || false;
+    if (typeof o.muted === "boolean") {
+      audio.setMuted(o.muted);
+      if (dom.btnMute) dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
+    }
     state.firstSide = config.firstSide || "light";
     state.viewFlip = mySide === "light";           // each player sees their own army at the bottom
     state.aegisMax = { light: state.aegis.light, dark: state.aegis.dark };
@@ -1077,17 +1127,18 @@
     const summons = state.pieces.filter(p => p.alive && p.side === side && !startIds.has(p.id)).map(p => ({ type: p.type, row: p.row, col: p.col, warded: !!p.warded }));
     const wards = state.pieces.filter(p => p.alive && p.side === side && p.warded && startIds.has(p.id)).map(p => p.id);
     const commands = (state.plan[side] || []).map(c => ({ pieceId: c.pieceId, kind: c.kind, row: c.row, col: c.col, targetId: c.targetId, reaperMode: c.reaperMode }));
-    return { commands, wards, summons, aegis: state.aegis[side] };
+    return { commands, wards, summons, aegis: state.aegis[side], bid: (state.crystalBid && state.crystalBid[side]) || 0 };
   }
   function applyOnlinePacket(side, packet) {
     if (!packet) return;
     const wardSet = new Set(packet.wards || []);
-    for (const p of state.pieces) if (p.alive && p.side === side) p.warded = wardSet.has(p.id);
+    for (const p of state.pieces) if (p.alive && p.side === side) p.warded = p.type !== "sovereign" && p.type !== "reaper" && wardSet.has(p.id);
     for (const s of (packet.summons || [])) {
       const sp = summonPiece(side, s.type, s.row, s.col);
       if (sp && s.warded) sp.warded = true;
     }
     if (typeof packet.aegis === "number") state.aegis[side] = clamp(packet.aegis, 0, state.aegisMax[side]);
+    if (packet.bid != null) state.crystalBid[side] = packet.bid || 0;
   }
   function resolveOnlineRound(plans) {
     if (state.mode !== "online" || !onlineRoundSnap) return;
@@ -1123,7 +1174,10 @@
     sc.daily = true; sc.dailyMod = mod;
     if (mod === "extra-furies") { sc.furies = true; sc.furyEvery = 3; }
     if (mod === "bonus-crystals") { sc.crystals = { light: (sc.crystals && sc.crystals.light) || 0, dark: ((sc.crystals && sc.crystals.dark) || 0) + 20 }; }
-    if (mod === "prewarded") { for (const p of sc.pieces) if (p.side !== sc.humanSide && p.type === "sovereign") p.warded = true; }
+    if (mod === "prewarded") {
+      const protectedPiece = sc.pieces.find(p => p.side !== sc.humanSide && p.type !== "sovereign" && p.type !== "reaper");
+      if (protectedPiece) protectedPiece.warded = true;
+    }
     audio._ensure();
     startMatch("bot", sc.humanSide, sc.furies, { scenario: sc });
   }
@@ -1144,13 +1198,14 @@
   /* ============================================================
    * AI PLAN APPLICATION
    * ============================================================ */
-  function applyAIPlan(side) {
-    let plan = { commands: [], wards: [] };
-    if (window.SG.AI && window.SG.AI.planTurn) plan = window.SG.AI.planTurn(side) || plan;
-    state.plan[side] = plan.commands.slice(0, MAX_CMD);
+  function applyAIPlan(side, diff) {
+    let plan = { commands: [], wards: [], bid: 0 };
+    if (window.SG.AI && window.SG.AI.planTurn) plan = window.SG.AI.planTurn(side, diff) || plan;
+    state.plan[side] = plan.commands.slice(0, maxCmdFor(side));
+    state.crystalBid[side] = plan.bid || 0;
     for (const id of plan.wards) {
       const p = pieceById(id);
-      if (p && p.alive && p.side === side && !p.warded && state.aegis[side] > 0) { p.warded = true; state.aegis[side]--; }
+      if (p && p.alive && p.side === side && p.type !== "sovereign" && p.type !== "reaper" && !p.warded && state.aegis[side] > 0) { p.warded = true; state.aegis[side]--; }
     }
     aiSummon(side);
     syncSidePanels();
@@ -1158,11 +1213,12 @@
 
   function aiSummon(side) {
     const persona = state.botPersona || "balanced";
-    if (persona === "warden" && state.crystals[side] < 60) return;   // the Warden hoards
+    const spendable = () => state.crystals[side] - ((state.crystalBid && state.crystalBid[side]) || 0);
+    if (persona === "warden" && spendable() < 60) return;   // the Warden hoards
     const cap = persona === "swarm" ? 5 : 3;
     let guard = 0;
     while (guard++ < cap) {
-      const opt = SUMMON_OPTIONS.slice().reverse().find(o => state.crystals[side] >= o.cost);
+      const opt = SUMMON_OPTIONS.slice().reverse().find(o => spendable() >= o.cost);
       if (!opt) break;
       const tiles = homeTilesFor(side);
       if (!tiles.length) break;
@@ -1548,7 +1604,7 @@
             else {
               const tRow = target.row, tCol = target.col;
               predKill(target, forecast);
-              if (defs.strikeChain && !target.alive) { const g2 = buildOccupancyGrid(clones); for (const [dr, dc] of KING_DIRS) { const r = tRow + dr, c = tCol + dc; if (!inBounds(r, c)) continue; const o = g2[r][c]; if (o && o.alive && o.side !== p.side) { predKill(o, forecast); break; } } }
+              if (defs.strikeChain && !target.alive) { const g2 = buildOccupancyGrid(clones); for (const [dr, dc] of ROOK_DIRS) { const r = tRow + dr, c = tCol + dc; if (!inBounds(r, c)) continue; const o = g2[r][c]; if (o && o.alive && o.side !== p.side) { predKill(o, forecast); break; } } }
               if (!target.alive) { const g2 = buildOccupancyGrid(clones); if (!g2[tRow][tCol]) { p.row = tRow; p.col = tCol; forecast.captures.push({ id: p.id, row: tRow, col: tCol }); } }
             }
           }
@@ -1979,14 +2035,14 @@
    * ============================================================ */
   const dom = {};
   ["startScreen","hud","gameOverScreen","planBar","planLabel","btnWard","btnUndo","btnClear","btnValidate",
-   "btnSummon","crystalLight","crystalDark",
+   "btnSummon","btnBid","crystalLight","crystalDark",
    "btnReplay","btnRevert","btnThreat","btnForesight","choiceScreen","choiceTitle","choiceSub","choiceOptions","choiceCancel",
    "btnHotseat","btnVsBot","btnPlayAgain","btnMainMenu","btnMute","btnQuit","turnBanner","eventLog","winnerHeadline","furyToggle","hazardToggle",
    "aegisLight","aegisDark","royalLight","royalDark","countLight","countDark",
    "handoffScreen","handoffTitle","handoffText","btnHandoffReady",
    "btnHelp","btnHelpGame","helpScreen","btnHelpClose","ledger","hallRecord",
-   "difficulty","persona","btnTrials","btnDaily","trialsScreen","trialsList","btnTrialsClose","hazardToggle",
-   "btnOptions","btnOptionsGame","optionsScreen","btnOptionsClose","optReduceMotion","optColorGlyphs","optSpeed","optSpeedVal",
+   "difficulty","persona","movesPerRound","btnTrials","btnDaily","trialsScreen","trialsList","btnTrialsClose","hazardToggle",
+   "btnOptions","btnOptionsGame","optionsScreen","btnOptionsClose","optMute","optReduceMotion","optColorGlyphs","optSpeed","optSpeedVal",
    "btnDescend","btnMirror","boonScreen","boonList","boonTitle","mirrorScreen","btnMirrorClose","mirrorObols","mirrorUpgrades",
    "btnOnline","onlineScreen","onlineStatus","onlineSetup","onlineFury","btnCreateRoom","joinCode","btnJoinRoom","btnOnlineClose"].forEach(id => { dom[id] = document.getElementById(id); });
 
@@ -2100,7 +2156,7 @@
   function cancelChoice() { const fn = choiceCancelFn; closeChoice(); if (fn) fn(); }
 
   function openSummonChoice() {
-    const side = state.planningSide, have = state.crystals[side];
+    const side = state.planningSide, have = state.crystals[side] - ((state.crystalBid && state.crystalBid[side]) || 0);
     const room = homeTilesFor(side).length > 0;
     openChoice({
       title: t("summon.title"),
@@ -2110,6 +2166,53 @@
         disabled: !room || have < o.cost,
         onPick: () => { state.summonArmed = o.type; clearSelection(); updatePlanBar(); },
       })),
+    });
+  }
+  function openBidChoice() {
+    const side = state.planningSide;
+    const have = state.crystals[side] || 0;
+    const maxMultiplier = Math.floor(have / 20);
+    const maxBid = maxMultiplier * 20;
+    const currentBid = (state.crystalBid && state.crystalBid[side]) || 0;
+    const setBid = bid => {
+      state.crystalBid[side] = bid;
+      updatePlanBar();
+    };
+    const options = [{
+      label: t("bid.zero"), desc: t("bid.zeroDesc"), badge: "0◆",
+      onPick: () => setBid(0),
+    }];
+    if (maxMultiplier >= 1) {
+      for (let x = 1; x <= Math.min(5, maxMultiplier); x++) {
+        const amount = x * 20;
+        options.push({
+          label: t("bid.amount", { n: amount, x }),
+          desc: t("bid.amountDesc", { n: amount, x }),
+          badge: `${amount}◆`,
+          onPick: () => setBid(amount),
+        });
+      }
+      if (maxMultiplier > 5) options.push({
+        label: t("bid.allIn", { n: maxBid }), desc: t("bid.amountDesc", { n: maxBid, x: maxMultiplier }), badge: `${maxBid}◆`,
+        onPick: () => setBid(maxBid),
+      });
+    }
+    options.push({
+      label: t("bid.custom"), desc: t("bid.customDesc", { max: maxBid }),
+      onPick: () => {
+        const raw = window.prompt(t("bid.prompt", { max: maxBid, maxX: maxMultiplier }), currentBid ? currentBid / 20 : "");
+        if (raw == null || raw.trim() === "") return;
+        const number = Number(raw);
+        if (!Number.isFinite(number) || number < 0) return;
+        if (number === 0) { setBid(0); return; }
+        const x = number >= 20 && number % 20 === 0 ? Math.floor(number / 20) : Math.floor(number);
+        if (x >= 1) setBid(Math.min(x * 20, maxBid));
+      },
+    });
+    openChoice({
+      title: t("bid.title"),
+      sub: t("bid.sub", { have, current: currentBid }),
+      options,
     });
   }
   function openReaperChoice() {
@@ -2208,6 +2311,11 @@
     if (dom.btnForesight) { dom.btnForesight.textContent = t(state.foresightOn ? "btn.foresightOn" : "btn.foresightOff"); dom.btnForesight.classList.toggle("ward-on", state.foresightOn); }
     dom.btnSummon.classList.toggle("ward-on", !!state.summonArmed);
     dom.btnSummon.textContent = state.summonArmed ? t("btn.placing", { piece: pieceName(state.summonArmed) }) : t("btn.summon");
+    if (dom.btnBid) {
+      const bid = (state.crystalBid && state.crystalBid[side]) || 0;
+      dom.btnBid.textContent = t("btn.bid", { n: bid });
+      dom.btnBid.classList.toggle("ward-on", bid > 0);
+    }
     refreshBanner();
   }
 
@@ -2350,6 +2458,7 @@
     clearSelection(); updatePlanBar();
     if (!wasArmed) openSummonChoice();          // clicking while placing simply cancels the placement
   });
+  if (dom.btnBid) dom.btnBid.addEventListener("click", () => { if (!planningLocked()) openBidChoice(); });
   dom.choiceCancel.addEventListener("click", () => cancelChoice());
   dom.choiceScreen.addEventListener("click", (e) => { if (e.target === dom.choiceScreen) cancelChoice(); });  // backdrop
   document.addEventListener("keydown", (e) => {
@@ -2408,18 +2517,28 @@
   /* ---- Rites of Access (options) ---- */
   function syncOptionsUI() {
     const o = loadStore("sg.options", {});
+    if (typeof o.muted === "boolean") {
+      audio.setMuted(o.muted);
+      if (dom.btnMute) dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
+    }
+    if (dom.optMute) dom.optMute.checked = !!audio.muted;
+    if (dom.btnMute) dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
     if (dom.optReduceMotion) dom.optReduceMotion.checked = !!o.reduceMotion;
     if (dom.optColorGlyphs) dom.optColorGlyphs.checked = !!o.colorGlyphs;
     if (dom.optSpeed) dom.optSpeed.value = o.battleSpeed || 1;
     if (dom.optSpeedVal) dom.optSpeedVal.textContent = (o.battleSpeed || 1) + "×";
   }
   function saveOptionsFromUI() {
+    const isMuted = dom.optMute ? dom.optMute.checked : false;
+    audio.setMuted(isMuted);
     const o = {
+      muted: audio.muted,
       reduceMotion: dom.optReduceMotion ? dom.optReduceMotion.checked : false,
       colorGlyphs: dom.optColorGlyphs ? dom.optColorGlyphs.checked : false,
       battleSpeed: dom.optSpeed ? parseFloat(dom.optSpeed.value) : 1,
     };
     saveStore("sg.options", o);
+    if (dom.btnMute) dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
     // apply live to the current match
     state.reduceMotion = o.reduceMotion; state.colorGlyphs = o.colorGlyphs; state.battleSpeed = o.battleSpeed;
     if (dom.optSpeedVal) dom.optSpeedVal.textContent = o.battleSpeed + "×";
@@ -2431,6 +2550,7 @@
   if (dom.optReduceMotion) dom.optReduceMotion.addEventListener("change", saveOptionsFromUI);
   if (dom.optColorGlyphs) dom.optColorGlyphs.addEventListener("change", saveOptionsFromUI);
   if (dom.optSpeed) dom.optSpeed.addEventListener("input", saveOptionsFromUI);
+  if (dom.optMute) dom.optMute.addEventListener("change", saveOptionsFromUI);
 
   /* ---- Descent + Mirror UI ---- */
   const MIRROR_UPG = {
@@ -2516,17 +2636,25 @@
     if (planningLocked()) return;
     while (state.undoStack.length) undoLast();       // reverts this turn's summons and wards too
     state.plan[state.planningSide] = [];
+    state.crystalBid[state.planningSide] = 0;
     clearSelection(); syncSidePanels(); updatePlanBar();
   });
   dom.btnValidate.addEventListener("click", () => onValidate());
   dom.btnHandoffReady.addEventListener("click", () => onHandoffReady());
-  dom.btnMute.addEventListener("click", () => { audio.setMuted(!audio.muted); dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute"); });
+  dom.btnMute.addEventListener("click", () => {
+    audio.setMuted(!audio.muted);
+    dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
+    if (dom.optMute) dom.optMute.checked = audio.muted;
+    const savedOpts = loadStore("sg.options", {});
+    savedOpts.muted = audio.muted;
+    saveStore("sg.options", savedOpts);
+  });
   dom.btnQuit.addEventListener("click", () => showStart());
   dom.btnMainMenu.addEventListener("click", () => showStart());
   dom.btnPlayAgain.addEventListener("click", () => {
     if (state.runOutcome) startDescent();
     else if (state.scenario && !state.scenario.daily) startTrial(state.scenario);
-    else startMatch(state.mode, state.humanSide, state.furiesEnabled);
+    else startMatch(state.mode, state.humanSide, state.furiesEnabled, { movesPerRound: state.movesPerRound });
   });
   dom.btnHotseat.addEventListener("click", () => { audio._ensure(); startMatch("hotseat", "light", dom.furyToggle && dom.furyToggle.checked); });
   dom.btnVsBot.addEventListener("click", () => { audio._ensure(); startMatch("bot", "dark", dom.furyToggle && dom.furyToggle.checked); });
@@ -2605,6 +2733,7 @@
     nextPieceId = 1;
     state.mode = mode;
     state.humanSide = humanSide;
+    state.movesPerRound = opts.movesPerRound != null ? opts.movesPerRound : (dom.movesPerRound ? parseInt(dom.movesPerRound.value, 10) || 3 : 3);
     state.furiesEnabled = !!furiesEnabled;
     state.hazardsEnabled = opts.hazards != null ? !!opts.hazards : !!(dom.hazardToggle && dom.hazardToggle.checked);
     if (opts.scenario) state.hazardsEnabled = !!opts.scenario.hazards;
@@ -2612,6 +2741,10 @@
     state.reduceMotion = o.reduceMotion || false;
     state.battleSpeed = o.battleSpeed || 1;
     state.colorGlyphs = o.colorGlyphs || false;
+    if (typeof o.muted === "boolean") {
+      audio.setMuted(o.muted);
+      if (dom.btnMute) dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
+    }
     if (mode === "bot") {
       state.difficulty = opts.difficulty || (dom.difficulty ? dom.difficulty.value : "normal");
       let persona = opts.persona || (dom.persona ? dom.persona.value : "balanced");

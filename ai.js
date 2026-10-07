@@ -24,12 +24,21 @@
   SG.AI = {
     // Plans one round for `side` using only the visible board (never the opponent's hidden plan).
     // Difficulty sets how many pieces act + how sharply; persona reweights priorities.
-    // Returns { commands: [...], wards: [pieceId...] }.
-    planTurn(side) {
+    // Returns { commands: [...], wards: [pieceId...], bid }.
+    planTurn(side, requestedDiff) {
       const S = SG.state;
-      const diff = S.difficulty || "normal";
+      const diff = requestedDiff || S.difficulty || "normal";
+      const maxBotX = Math.floor((S.crystals[side] || 0) / 20);
+      let bid = 0;
+      if (maxBotX >= 1 && S.firstSide !== side) {
+        if (diff === "hard") bid = 20;
+        else if (diff === "unfair") bid = maxBotX >= 2 ? 40 : 20;
+      }
       const P = personaFor(S.botPersona);
-      let maxCmd = diff === "easy" ? 1 : diff === "normal" ? 2 : 3;
+      const baseMoves = (S.movesPerRound != null) ? S.movesPerRound : 3;
+      let maxCmd = diff === "easy" ? Math.max(1, baseMoves - 2)
+                 : diff === "normal" ? Math.max(1, baseMoves - 1)
+                 : baseMoves;
       if (S.boons && S.boons[side] && S.boons[side].nyx) maxCmd += 1;
       const sloppy = diff === "easy" ? 0.45 : 0;   // chance to pick a random legal move over the best one
       const sharpWard = diff === "hard" || diff === "unfair";
@@ -37,7 +46,7 @@
       const grid = SG.buildOccupancyGrid(S.pieces);
       const allies = S.pieces.filter(p => p.alive && p.side === side);
       const enemies = S.pieces.filter(p => p.alive && p.side !== side);
-      if (!allies.length || !enemies.length) return { commands: [], wards: [] };
+      if (!allies.length || !enemies.length) return { commands: [], wards: [], bid };
 
       const candidates = [];
 
@@ -106,7 +115,7 @@
           : { pieceId: c.pieceId, kind: "move", row: c.row, col: c.col });
       }
 
-      // Wards — shield the Sovereign, then the Reaper, then (warden persona) any threatened piece.
+      // Wards — royals are forbidden; the Warden persona may shield threatened commoners.
       const wards = [];
       let charges = S.aegis[side];
       if (diff === "easy") charges = 0; // an easy warden never wards
@@ -115,6 +124,7 @@
         .sort((a, b) => (VALUE[b.type] || 0) - (VALUE[a.type] || 0));
       for (const roy of priority) {
         if (charges <= 0) break;
+        if (roy.type === "sovereign" || roy.type === "reaper") continue;
         const isRoyal = roy.type === "sovereign" || roy.type === "reaper";
         if (!isRoyal && !P.defend) continue;                 // only the Warden wards commoners
         if (!isRoyal && Math.random() > 0.5 * P.wardAggr) continue;
@@ -122,7 +132,7 @@
         if (threatened && (isRoyal || sharpWard || P.defend)) { wards.push(roy.id); charges--; }
       }
 
-      return { commands, wards };
+      return { commands, wards, bid };
     },
   };
 })();
