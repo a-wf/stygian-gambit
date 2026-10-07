@@ -74,6 +74,7 @@
   const ROOK_DIRS = [[-1,0],[1,0],[0,-1],[0,1]];
   const BISHOP_DIRS = [[-1,-1],[-1,1],[1,-1],[1,1]];
   const KNIGHT_OFFSETS = [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]];
+  const STRAIGHT_2 = [[-2,0],[2,0],[0,-2],[0,2]];
 
   // Lives = killing blows the piece can take before it truly dies.
   const PIECE_DEFS = {
@@ -164,7 +165,7 @@
       id: nextPieceId++,
       type, side, facing,
       lives: defs.lives, maxLives: defs.lives,
-      warded: false,
+      warded: false, wardRound: null,
       row, col, x: c.x, y: c.y,
       animState: "idle",
       tween: null, dashMeta: null, trail: [],
@@ -183,7 +184,10 @@
       const facing = d.side === "light" ? 1 : -1;
       const p = makePiece(d.type, d.side, d.row, d.col, facing);
       if (d.lives != null) p.lives = Math.min(d.lives, p.maxLives);
-      if (d.warded && p.type !== "sovereign" && p.type !== "reaper") p.warded = true;
+      if (d.warded && p.type !== "sovereign" && p.type !== "reaper") {
+        p.warded = true;
+        p.wardRound = 0;
+      }
       pieces.push(p);
     }
     return pieces;
@@ -203,7 +207,7 @@
 
   /* ---- Snapshots (durable state) — powers Replay + Redo/Revert ---- */
   function clonePieceDurable(p) {
-    return { id: p.id, type: p.type, side: p.side, facing: p.facing, lives: p.lives, maxLives: p.maxLives, warded: p.warded, row: p.row, col: p.col, alive: p.alive };
+    return { id: p.id, type: p.type, side: p.side, facing: p.facing, lives: p.lives, maxLives: p.maxLives, warded: p.warded, wardRound: p.wardRound, row: p.row, col: p.col, alive: p.alive };
   }
   function snapshotState() {
     return {
@@ -220,7 +224,7 @@
     const c = cellCenter(d.row, d.col);
     return {
       id: d.id, type: d.type, side: d.side, facing: d.facing,
-      lives: d.lives, maxLives: d.maxLives, warded: d.warded,
+      lives: d.lives, maxLives: d.maxLives, warded: d.warded, wardRound: d.wardRound == null ? null : d.wardRound,
       row: d.row, col: d.col, x: c.x, y: c.y,
       animState: "idle", tween: null, dashMeta: null, trail: [],
       lunge: null, hitFlashUntil: 0, alive: d.alive, dyingUntil: 0,
@@ -347,6 +351,10 @@
   function leapMoveTiles(row, col, grid) {
     const tiles = [];
     for (const [dr, dc] of KNIGHT_OFFSETS) {
+      const r = row + dr, c = col + dc;
+      if (inBounds(r, c) && !grid[r][c] && !terrainBlocks(r, c)) tiles.push({ row: r, col: c });
+    }
+    for (const [dr, dc] of STRAIGHT_2) {
       const r = row + dr, c = col + dc;
       if (inBounds(r, c) && !grid[r][c] && !terrainBlocks(r, c)) tiles.push({ row: r, col: c });
     }
@@ -511,12 +519,17 @@
       return;
     }
     if (piece.warded) {
+      if (piece.wardRound != null && piece.wardRound < state.roundNumber) {
+        setCaption(t("note.shieldPermanent"));
+        return;
+      }
       piece.warded = false;
+      piece.wardRound = null;
       state.aegis[side] = Math.min(state.aegisMax[side], state.aegis[side] + 1);  // never exceed the match's charges
       state.undoStack.push({ type: "unward", pieceId: piece.id });
       setCaption(t("note.unward", { who: describePiece(piece) }));
     } else if (state.aegis[side] > 0) {
-      piece.warded = true; state.aegis[side]--;
+      piece.warded = true; piece.wardRound = state.roundNumber; state.aegis[side]--;
       bumpStat(side, "aegisUsed"); audio.boon();
       state.undoStack.push({ type: "ward", pieceId: piece.id });
       setCaption(t("note.ward", { who: describePiece(piece) }));
@@ -542,11 +555,11 @@
       if (i >= 0) state.plan[side][i] = a.prev;
     } else if (a.type === "ward") {
       const p = pieceById(a.pieceId);
-      if (p && p.warded) { p.warded = false; state.aegis[side] = Math.min(state.aegisMax[side], state.aegis[side] + 1); }
+      if (p && p.warded) { p.warded = false; p.wardRound = null; state.aegis[side] = Math.min(state.aegisMax[side], state.aegis[side] + 1); }
       if (state.stats[side]) state.stats[side].aegisUsed = Math.max(0, state.stats[side].aegisUsed - 1);
     } else if (a.type === "unward") {
       const p = pieceById(a.pieceId);
-      if (p && !p.warded && state.aegis[side] > 0) { p.warded = true; state.aegis[side]--; }
+      if (p && !p.warded && state.aegis[side] > 0) { p.warded = true; p.wardRound = state.roundNumber; state.aegis[side]--; }
     }
   }
 
@@ -600,7 +613,7 @@
     dom.handoffText.textContent = t("handoff.text", { side: sideLabel(nextSide) });
     dom.btnHandoffReady.textContent = t("handoff.ready", { side: sideLabel(nextSide) });
     dom.handoffScreen.classList.remove("hidden");
-    dom.planBar.classList.add("hidden");
+    setPlanControlsVisible(false);
     refreshBanner();
   }
   function onHandoffReady() {
@@ -659,7 +672,7 @@
     state.wardMode = false;
     state.summonArmed = null;
     state.pendingReaperStrike = null;
-    dom.planBar.classList.add("hidden");
+    setPlanControlsVisible(false);
     closeChoice();
     // Hermes' Haste overrides initiative for the side that holds it.
     let fs = state.firstSide;
@@ -754,6 +767,39 @@
     else resolveStrike(piece, cmd, ts);
   }
 
+  function linePathBeforeBlocker(piece, cmd, grid) {
+    const dRow = cmd.row - piece.row, dCol = cmd.col - piece.col;
+    const isLine = (dRow === 0 || dCol === 0 || Math.abs(dRow) === Math.abs(dCol)) && (dRow !== 0 || dCol !== 0);
+    if (!isLine) return null;
+    const steps = Math.max(Math.abs(dRow), Math.abs(dCol));
+    const dr = Math.sign(dRow), dc = Math.sign(dCol);
+    let lastFreeStep = 0, blocked = false;
+    for (let s = 1; s <= steps; s++) {
+      const r = piece.row + dr * s, c = piece.col + dc * s;
+      if (!inBounds(r, c) || grid[r][c] || terrainBlocks(r, c)) {
+        blocked = true;
+        break;
+      }
+      lastFreeStep = s;
+    }
+    return blocked ? { lastFreeStep, dr, dc } : null;
+  }
+
+  function advanceToLastFreeStep(piece, cmd, grid, ts, captionKey) {
+    const path = linePathBeforeBlocker(piece, cmd, grid);
+    if (!path || path.lastFreeStep < 1) return false;
+    const destR = piece.row + path.dr * path.lastFreeStep;
+    const destC = piece.col + path.dc * path.lastFreeStep;
+    piece.lunge = null;
+    startDash(piece, destR, destC, ts, { kind: "move" });
+    applyTerrainOnLand(piece, ts);
+    state.shake = Math.min(6, state.shake + 1);
+    const stop = cellCenter(destR, destC);
+    spawnDustPuff(stop.x, stop.y, piece.side, 4);
+    setCaption(t(captionKey, { who: describePiece(piece) }));
+    return true;
+  }
+
   function resolveMove(piece, cmd, ts) {
     const grid = buildOccupancyGrid(state.pieces);
     const legal = inBounds(cmd.row, cmd.col) && !grid[cmd.row][cmd.col] &&
@@ -763,9 +809,11 @@
       setCaption(t("cap.advances", { who: describePiece(piece) }));
       applyTerrainOnLand(piece, ts);
     } else {
-      state.shake = Math.min(6, state.shake + 2);
-      spawnDustPuff(piece.x, piece.y, piece.side, 6);
-      setCaption(t("cap.blocked", { who: describePiece(piece) }));
+      if (!advanceToLastFreeStep(piece, cmd, grid, ts, "cap.advancesBlocked")) {
+        state.shake = Math.min(6, state.shake + 2);
+        spawnDustPuff(piece.x, piece.y, piece.side, 6);
+        setCaption(t("cap.blocked", { who: describePiece(piece) }));
+      }
     }
   }
 
@@ -814,15 +862,27 @@
       getAttackTiles(piece, grid).some(t => t.row === target.row && t.col === target.col);
     const aimX = target ? target.x : cellCenter(cmd.row, cmd.col).x;
     const aimY = target ? target.y : cellCenter(cmd.row, cmd.col).y;
-    piece.lunge = { fromX: piece.x, fromY: piece.y, targetX: aimX, targetY: aimY, startTs: ts, hitTs: ts, windupMs: 1, recoverMs: 260 };
 
     if (!inRange) {
       spawnSlash(piece, { x: aimX, y: aimY }, ts, "normal");
       spawnDamageText(aimX, aimY, t("fx.shadow"), "#9a8fb0");
       audio.dash();
+      const advancesOnStrike = defs.attackKind === "melee" || defs.attackKind === "pawnDiag" ||
+        (defs.strikeAoe && cmd.reaperMode === "advance");
+      if (advancesOnStrike && inBounds(cmd.row, cmd.col) &&
+          !grid[cmd.row][cmd.col] && !terrainBlocks(cmd.row, cmd.col)) {
+        piece.lunge = null;
+        startDash(piece, cmd.row, cmd.col, ts, { kind: "move" });
+        applyTerrainOnLand(piece, ts);
+        setCaption(t("cap.whiffAdvance", { who: describePiece(piece) }));
+        return;
+      }
+      if (advancesOnStrike && advanceToLastFreeStep(piece, cmd, grid, ts, "cap.whiffAdvance")) return;
+      piece.lunge = { fromX: piece.x, fromY: piece.y, targetX: aimX, targetY: aimY, startTs: ts, hitTs: ts, windupMs: 1, recoverMs: 260 };
       setCaption(t("cap.whiff", { who: describePiece(piece) }));
       return;
     }
+    piece.lunge = { fromX: piece.x, fromY: piece.y, targetX: aimX, targetY: aimY, startTs: ts, hitTs: ts, windupMs: 1, recoverMs: 260 };
 
     const tRow = target.row, tCol = target.col;
     if (defs.attackKind === "ranged") spawnProjectile(piece, target, ts, true);
@@ -867,6 +927,7 @@
     if (!target.alive) return null;
     if (target.warded) {
       target.warded = false;
+      target.wardRound = null;
       target.hitFlashUntil = ts + 240;
       spawnShockwave(target.x, target.y, "#e8c657", ts, { maxRadius: 54, durationMs: 440 });
       spawnBurstParticles(target.x, target.y, "neutral", 16);
@@ -905,6 +966,7 @@
     if (!piece.alive) return false;
     if (piece.warded) {
       piece.warded = false;
+      piece.wardRound = null;
       piece.hitFlashUntil = ts + 240;
       spawnShockwave(piece.x, piece.y, "#e8c657", ts, { maxRadius: 54, durationMs: 440 });
       spawnDamageText(piece.x, piece.y - 6, t("fx.aegis"), "#e8c657");
@@ -1132,10 +1194,16 @@
   function applyOnlinePacket(side, packet) {
     if (!packet) return;
     const wardSet = new Set(packet.wards || []);
-    for (const p of state.pieces) if (p.alive && p.side === side) p.warded = p.type !== "sovereign" && p.type !== "reaper" && wardSet.has(p.id);
+    for (const p of state.pieces) {
+      if (!p.alive || p.side !== side) continue;
+      const warded = p.type !== "sovereign" && p.type !== "reaper" && wardSet.has(p.id);
+      if (warded && !p.warded) p.wardRound = state.roundNumber;
+      if (!warded) p.wardRound = null;
+      p.warded = warded;
+    }
     for (const s of (packet.summons || [])) {
       const sp = summonPiece(side, s.type, s.row, s.col);
-      if (sp && s.warded) sp.warded = true;
+      if (sp && s.warded) { sp.warded = true; sp.wardRound = state.roundNumber; }
     }
     if (typeof packet.aegis === "number") state.aegis[side] = clamp(packet.aegis, 0, state.aegisMax[side]);
     if (packet.bid != null) state.crystalBid[side] = packet.bid || 0;
@@ -1205,7 +1273,11 @@
     state.crystalBid[side] = plan.bid || 0;
     for (const id of plan.wards) {
       const p = pieceById(id);
-      if (p && p.alive && p.side === side && p.type !== "sovereign" && p.type !== "reaper" && !p.warded && state.aegis[side] > 0) { p.warded = true; state.aegis[side]--; }
+      if (p && p.alive && p.side === side && p.type !== "sovereign" && p.type !== "reaper" && !p.warded && state.aegis[side] > 0) {
+        p.warded = true;
+        p.wardRound = state.roundNumber;
+        state.aegis[side]--;
+      }
     }
     aiSummon(side);
     syncSidePanels();
@@ -2034,17 +2106,22 @@
    * UI SYNC
    * ============================================================ */
   const dom = {};
-  ["startScreen","hud","gameOverScreen","planBar","planLabel","btnWard","btnUndo","btnClear","btnValidate",
+  ["startScreen","hud","gameOverScreen","planBar","boardActions","planLabel","btnWard","btnUndo","btnClear","btnValidate",
    "btnSummon","btnBid","crystalLight","crystalDark",
    "btnReplay","btnRevert","btnThreat","btnForesight","choiceScreen","choiceTitle","choiceSub","choiceOptions","choiceCancel",
    "btnHotseat","btnVsBot","btnPlayAgain","btnMainMenu","btnMute","btnQuit","turnBanner","eventLog","winnerHeadline","furyToggle","hazardToggle",
-   "aegisLight","aegisDark","royalLight","royalDark","countLight","countDark",
+   "aegisLight","aegisDark","royalLight","royalDark","countLight","countDark","panelLight","panelDark","midPanel","titleSideLight","titleSideDark",
    "handoffScreen","handoffTitle","handoffText","btnHandoffReady",
    "btnHelp","btnHelpGame","helpScreen","btnHelpClose","ledger","hallRecord",
    "difficulty","persona","movesPerRound","btnTrials","btnDaily","trialsScreen","trialsList","btnTrialsClose","hazardToggle",
    "btnOptions","btnOptionsGame","optionsScreen","btnOptionsClose","optMute","optReduceMotion","optColorGlyphs","optSpeed","optSpeedVal",
    "btnDescend","btnMirror","boonScreen","boonList","boonTitle","mirrorScreen","btnMirrorClose","mirrorObols","mirrorUpgrades",
    "btnOnline","onlineScreen","onlineStatus","onlineSetup","onlineFury","btnCreateRoom","joinCode","btnJoinRoom","btnOnlineClose"].forEach(id => { dom[id] = document.getElementById(id); });
+
+  function setPlanControlsVisible(visible) {
+    dom.planBar.classList.toggle("hidden", !visible);
+    dom.boardActions.classList.toggle("hidden", !visible);
+  }
 
   function logEvent(text) {
     if (state.isReplay) return;
@@ -2103,6 +2180,25 @@
     return pips(k, "king", "♛") + " &nbsp; " + pips(q, "queen", "♕");
   }
   function syncSidePanels() {
+    if (state.mode === "bot" || state.mode === "online") {
+      const humanSide = state.humanSide;
+      const opponentSide = otherSide(humanSide);
+      dom.panelLight.style.order = humanSide === "light" ? "1" : "3";
+      dom.midPanel.style.order = "2";
+      dom.panelDark.style.order = humanSide === "dark" ? "1" : "3";
+      dom.titleSideLight.textContent = humanSide === "light"
+        ? `${sideLabel(humanSide)} (${t("hud.you")})`
+        : sideLabel(opponentSide);
+      dom.titleSideDark.textContent = humanSide === "dark"
+        ? `${sideLabel(humanSide)} (${t("hud.you")})`
+        : sideLabel(opponentSide);
+    } else {
+      dom.panelLight.style.order = "1";
+      dom.midPanel.style.order = "2";
+      dom.panelDark.style.order = "3";
+      dom.titleSideLight.textContent = sideLabel("light");
+      dom.titleSideDark.textContent = sideLabel("dark");
+    }
     dom.aegisLight.innerHTML = aegisStr("light");
     dom.aegisDark.innerHTML = aegisStr("dark");
     dom.crystalLight.textContent = state.crystals.light;
@@ -2293,9 +2389,9 @@
   }
 
   function updatePlanBar() {
-    if (state.scene !== "planning") { dom.planBar.classList.add("hidden"); return; }
-    if (state.mode === "online" && state.onlineWaiting) { dom.planBar.classList.add("hidden"); closeChoice(); refreshBanner(); return; }
-    dom.planBar.classList.remove("hidden");
+    if (state.scene !== "planning") { setPlanControlsVisible(false); return; }
+    if (state.mode === "online" && state.onlineWaiting) { setPlanControlsVisible(false); closeChoice(); refreshBanner(); return; }
+    setPlanControlsVisible(true);
     const side = state.planningSide;
     const used = new Set(state.plan[side].map(c => c.pieceId)).size;
     dom.planLabel.textContent = t("plan.label", { side: sideLabel(side), used, max: maxCmdFor(side), aegis: state.aegis[side], aegisMax: state.aegisMax[side], crystals: state.crystals[side] });
@@ -2332,7 +2428,7 @@
     state.firstSide = state.lastBattle.firstSide;
     state.isReplay = true;
     clearSelection();
-    dom.planBar.classList.add("hidden");
+    setPlanControlsVisible(false);
     closeChoice();
     beginBattle(state.lastTs);
   }
@@ -2690,7 +2786,7 @@
     dom.hud.classList.add("hidden");
     dom.gameOverScreen.classList.add("hidden");
     dom.handoffScreen.classList.add("hidden");
-    dom.planBar.classList.add("hidden");
+    setPlanControlsVisible(false);
     closeChoice();
     if (dom.boonScreen) dom.boonScreen.classList.add("hidden");
     if (dom.mirrorScreen) dom.mirrorScreen.classList.add("hidden");
@@ -2827,6 +2923,7 @@
   function refreshLanguage() {
     if (!state) return;
     dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
+    syncSidePanels();
     dom.btnSummon.textContent = t("btn.summon");
     dom.btnWard.textContent = t("btn.wardOff");
     dom.btnThreat.textContent = t("btn.threatOff");
