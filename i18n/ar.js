@@ -92,8 +92,6 @@ window.SG.I18N_DICT.ar = {
   "title.revertOnline": "غير متاح عبر الشبكة — يتشارك اللاعبان خطًّا زمنيًّا واحدًا",
   "title.options": "الخيارات",
   "title.bid": "راهن بالبلورات لفرض أسبقية الحركة (صاحب العرض الأعلى يتحرك أولاً)",
-  "btn.mute": "كتم الصوت",
-  "btn.unmute": "تشغيل الصوت",
   "btn.bid": "المبادرة: {n}◆",
   "btn.helpGame": "مساعدة",
   "btn.quit": "القائمة الرئيسية",
@@ -276,7 +274,6 @@ window.SG.I18N_DICT.ar = {
   "options.title": "طقوس الإتاحة",
   "options.subtitle": "اضبط إيقاع العالم السفلي ووضوحه.",
   "options.speed": "سرعة المعركة",
-  "options.mute": "كتم الصوت",
   "options.reduceMotion": "تقليل الحركة (بلا اهتزاز ولا وميض ولا تكبير)",
   "options.glyphs": "رموز الأطراف لعمى الألوان (▲ الدُّجى / ▽ الجمر)",
 
