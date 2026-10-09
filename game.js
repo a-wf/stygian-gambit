@@ -1981,11 +1981,9 @@
     }
   }
 
-  // Draw each role's figure into its legend icon canvas on the start screen.
-  function paintIcon(cv, type, side) {
-    const lc = cv.getContext("2d");
-    const w = cv.width, h = cv.height, r = w * 0.30;
-    lc.clearRect(0, 0, w, h);
+  // Draw a role's figure (static pose, ts = 0) with its halo into a w x h 2D context.
+  function drawIconFigure(lc, type, side, w, h) {
+    const r = w * 0.30;
     const colors = glyphColor(side), pal = sidePalette(side);
     lc.save();
     lc.translate(w / 2, h * 0.56);
@@ -1995,9 +1993,111 @@
     paintFigure(type, pal, r, 0, lc);
     lc.restore();
   }
+
+  // Static icon images are cached per (theme, role, side, backing size). Icons are always painted at
+  // ts = 0 from fixed side palettes, and painters are deterministic (no randomness, no text/web
+  // fonts), so these are all the inputs. Entries also remember the theme object they were painted
+  // from, so a replaced theme definition is never served stale. Animated board figures are NOT cached.
+  // Bounded LRU: 12 themes x 8 role/side pairs at 52px fits comfortably (~10 KB per image).
+  const ICON_CACHE_MAX = 128;
+  const iconCache = new Map();
+  // Same resolution as paintFigure(): the theme the figure would actually be drawn with right now.
+  function currentFigureTheme() {
+    const themes = SG.THEMES || {};
+    const id = (state && state.theme) || activeThemeId || "classic";
+    return themes[id] ? { id, theme: themes[id] } : { id: "classic", theme: themes.classic };
+  }
+  function iconImage(type, side, w, h) {
+    const { id, theme } = currentFigureTheme();
+    const key = `${id}|${type}|${side}|${w}x${h}`;
+    const hit = iconCache.get(key);
+    if (hit && hit.theme === theme) {
+      iconCache.delete(key); iconCache.set(key, hit);       // refresh LRU position
+      return hit.img;
+    }
+    const img = document.createElement("canvas");
+    img.width = w; img.height = h;
+    drawIconFigure(img.getContext("2d"), type, side, w, h); // only cached if painting completed
+    iconCache.delete(key);
+    iconCache.set(key, { theme, img });
+    while (iconCache.size > ICON_CACHE_MAX) iconCache.delete(iconCache.keys().next().value);
+    return img;
+  }
+
+  // Draw each role's figure into an icon canvas (legend, help roles, choice cards) in the current theme.
+  // Size is read from the canvas backing store at paint time, so a resized canvas gets a matching image.
+  function paintIcon(cv, type, side) {
+    const w = cv.width, h = cv.height;
+    if (!w || !h) return;
+    const lc = cv.getContext("2d");
+    if (!lc) return;
+    const img = iconImage(type, side, w, h);
+    lc.save();
+    lc.setTransform(1, 0, 0, 1, 0, 0);
+    lc.globalAlpha = 1; lc.globalCompositeOperation = "source-over";
+    lc.clearRect(0, 0, w, h);
+    lc.drawImage(img, 0, 0);
+    lc.restore();
+  }
+  function legendIconJobs() {
+    return [...document.querySelectorAll(".legend-icon")].map(cv =>
+      ({ cv, type: cv.getAttribute("data-piece"), side: cv.getAttribute("data-side") || "light" }));
+  }
   function buildLegendIcons() {
-    document.querySelectorAll(".legend-icon").forEach(cv =>
-      paintIcon(cv, cv.getAttribute("data-piece"), cv.getAttribute("data-side") || "light"));
+    legendIconJobs().forEach(j => paintIcon(j.cv, j.type, j.side));
+  }
+
+  // Deferred, coalesced repaint of the theme-dependent icons after a theme switch, so the input that
+  // triggered it gets visual feedback (select + board) before any expensive figure painting runs.
+  // - Coalescing: at most one runner is pending; further requests only bump `gen`.
+  // - Latest wins: the runner re-collects its targets whenever `gen` moved, and every paint reads the
+  //   theme current at paint time, so an older selection can never overwrite a newer one.
+  // - Yielding: each slice runs in a task after the next frame is presented and stops once its time
+  //   budget is spent (always making progress by at least one icon); cache hits are near-free.
+  // - Hidden document: requestAnimationFrame is paused, so work resumes once the page is visible.
+  // - Stale DOM: targets are re-collected per generation and detached canvases are skipped.
+  const ICON_SLICE_MS = 6;
+  const iconRepaint = { gen: 0, queueGen: -1, queue: [], pending: false };
+  function iconRepaintJobs() {
+    const jobs = legendIconJobs();
+    const roles = dom.helpScreen ? dom.helpScreen.querySelectorAll("canvas.role-icon") : [];
+    roles.forEach(cv => {
+      const type = cv.dataset.piece;
+      if (type) jobs.push({ cv, type, side: type === "fury" ? "neutral" : "light" });
+    });
+    // Icons on screen first; ones inside hidden overlays still get refreshed afterwards.
+    const shown = jobs.filter(j => j.cv.getClientRects().length > 0);
+    return shown.concat(jobs.filter(j => !shown.includes(j)));
+  }
+  function runIconRepaintSoon() {
+    requestAnimationFrame(() => setTimeout(runIconRepaint, 0));
+  }
+  function runIconRepaint() {
+    try {
+      if (iconRepaint.queueGen !== iconRepaint.gen) {
+        iconRepaint.queueGen = iconRepaint.gen;   // set first: a failing collection must not retry forever
+        iconRepaint.queue = [];
+        iconRepaint.queue = iconRepaintJobs();
+      }
+      const start = performance.now();
+      while (iconRepaint.queue.length) {
+        const j = iconRepaint.queue.shift();
+        if (j.cv.isConnected) {
+          try { paintIcon(j.cv, j.type, j.side); }
+          catch (err) { if (typeof console !== "undefined") console.warn("[Stygian Gambit] icon repaint failed for", j.type, err); }
+        }
+        if (performance.now() - start >= ICON_SLICE_MS) break;
+      }
+    } finally {
+      if (iconRepaint.queue.length || iconRepaint.queueGen !== iconRepaint.gen) runIconRepaintSoon();
+      else iconRepaint.pending = false;
+    }
+  }
+  function scheduleIconRepaint() {
+    iconRepaint.gen++;
+    if (iconRepaint.pending) return;
+    iconRepaint.pending = true;
+    runIconRepaintSoon();
   }
 
   function drawSlashes(ts) {
@@ -2677,14 +2777,15 @@
     });
     syncThemeSelects();
   }
-  // Cosmetic only: the board redraws on the next animation frame, legend icons repaint immediately.
+  // Cosmetic only: theme state and both pickers update immediately, the board redraws on the next
+  // animation frame, and legend / help role icons repaint in deferred, yielding slices afterwards
+  // (see scheduleIconRepaint) so a theme switch never blocks input feedback.
   function setTheme(id, persist = true) {
     activeThemeId = normalizeThemeId(id);
     if (state) state.theme = activeThemeId;
     if (persist) { try { localStorage.setItem(THEME_STORAGE_KEY, activeThemeId); } catch (e) { /* storage blocked */ } }
     syncThemeSelects();
-    buildLegendIcons();
-    if (dom.helpScreen && !dom.helpScreen.classList.contains("hidden")) decorateHelpRoles();
+    scheduleIconRepaint();
   }
   themeSelects().forEach(sel => sel.addEventListener("change", e => setTheme(e.target.value)));
 
