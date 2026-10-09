@@ -8517,17 +8517,26 @@
         k.ellipse(0.22, -0.14, 0.025, 0.025, "#fff4ad", null);
       },
       wildrider(c, pal, r, ts, h) {
-        const k = rosterKit(c, pal, r, h), gold = "#d9b04d";
-        // Gold-plated war chariot with wheel spokes.
-        k.poly([[-0.81, 0.42], [0.65, 0.42], [0.83, 0.7], [0.69, 0.9], [-0.69, 0.9], [-0.85, 0.69]], gold);
-        k.ring(-0.53, 0.82, 0.13, "#473d2d", Math.max(1.5, r * 0.045));
-        k.ring(0.53, 0.82, 0.13, "#473d2d", Math.max(1.5, r * 0.045));
-        for (const x of [-0.53, 0.53]) for (let i = 0; i < 4; i++) {
-          const a = i * Math.PI / 4; k.line([[x, 0.82], [x + Math.cos(a) * 0.11, 0.82 + Math.sin(a) * 0.11]], gold, Math.max(0.8, r * 0.02));
+        const k = rosterKit(c, pal, r, h), gold = "#d9b04d", skin = "#b98336", plumage = "#242631";
+        const limb = Math.max(2.2, r * 0.085);
+        // Horus's body stands in the chariot: drawn first so the chariot front only hides his waist,
+        // while the neck, usekh collar and broad shoulders tie the falcon head to the torso.
+        k.path((p) => { p.M(-0.38, 0.1); p.Q(-0.36, 0.0, -0.14, -0.01); p.L(0.14, -0.01); p.Q(0.36, 0.0, 0.38, 0.1); p.L(0.27, 0.3); p.L(0.23, 0.54); p.L(-0.23, 0.54); p.L(-0.27, 0.3); p.Z(); }, skin);
+        // Feathered falcon corselet in the side colour, hung from gold shoulder straps.
+        k.poly([[-0.27, 0.2], [0.27, 0.2], [0.23, 0.54], [-0.23, 0.54]], pal.mid);
+        for (const y of [0.29, 0.38]) for (let i = 0; i < 4; i++) {
+          const x = -0.18 + i * 0.12;
+          k.path((p) => { p.M(x - 0.06, y); p.Q(x, y + 0.08, x + 0.06, y); }, null, pal.bright, Math.max(0.8, r * 0.02));
         }
+        k.line([[-0.22, 0.04], [-0.13, 0.2]], gold, Math.max(1, r * 0.03));
+        k.line([[0.22, 0.04], [0.13, 0.2]], gold, Math.max(1, r * 0.03));
+        // Feathered falcon neck rising from the shoulders into the head.
+        k.poly([[-0.12, -0.1], [-0.15, 0.06], [0.15, 0.06], [0.12, -0.1]], plumage);
+        // Broad usekh collar over the neck join.
+        k.path((p) => { p.M(-0.31, 0.05); p.Q(0, 0.34, 0.31, 0.05); p.L(0.17, -0.01); p.Q(0, 0.13, -0.17, -0.01); p.Z(); }, gold);
+        k.path((p) => { p.M(-0.24, 0.07); p.Q(0, 0.25, 0.24, 0.07); }, null, pal.bright, Math.max(1, r * 0.03));
         // Horus falcon warrior and Wedjat eye.
-        k.poly([[-0.23, 0.36], [-0.27, 0.67], [0.25, 0.67], [0.2, 0.35]], pal.mid);
-        k.ellipse(0, -0.24, 0.24, 0.22, "#242631");
+        k.ellipse(0, -0.24, 0.24, 0.22, plumage);
         k.poly([[0.14, -0.27], [0.42, -0.2], [0.15, -0.13]], gold);
         k.eye(0.07, -0.3, pal.bright);
         k.path((p) => { p.M(-0.2, -0.15); p.Q(-0.05, -0.04, 0.12, -0.15); p.Q(0.0, 0.02, -0.1, 0.05); }, null, "#f1d46f", Math.max(1, r * 0.03));
@@ -8535,9 +8544,25 @@
         k.poly([[-0.22, -0.4], [-0.19, -0.79], [0, -0.88], [0.19, -0.79], [0.22, -0.4]], "#d94737");
         k.poly([[-0.17, -0.76], [-0.15, -1.03], [0, -1.09], [0.15, -1.03], [0.17, -0.76]], "#f0d169");
         k.path((p) => { p.M(0.02, -0.73); p.C(0.25, -0.83, 0.22, -0.61, 0.08, -0.65); p.C(-0.01, -0.68, 0.11, -0.78, 0.15, -0.7); }, null, gold, Math.max(1, r * 0.035));
+        // Gold-plated war chariot with wheel spokes; its front rail sits at the waist.
+        k.poly([[-0.81, 0.42], [0.65, 0.42], [0.83, 0.7], [0.69, 0.9], [-0.69, 0.9], [-0.85, 0.69]], gold);
+        k.line([[-0.78, 0.5], [0.66, 0.5]], pal.bright, Math.max(1, r * 0.028));
+        k.ring(-0.53, 0.82, 0.13, "#473d2d", Math.max(1.5, r * 0.045));
+        k.ring(0.53, 0.82, 0.13, "#473d2d", Math.max(1.5, r * 0.045));
+        for (const x of [-0.53, 0.53]) for (let i = 0; i < 4; i++) {
+          const a = i * Math.PI / 4; k.line([[x, 0.82], [x + Math.cos(a) * 0.11, 0.82 + Math.sin(a) * 0.11]], gold, Math.max(0.8, r * 0.02));
+        }
+        // Arms from the shoulders: left hand grips the chariot rail, right hand raises the khopesh.
+        const arm = (pts) => { k.line(pts, k.ink, limb + Math.max(1, r * 0.04)); k.line(pts, skin, limb); };
+        arm([[-0.33, 0.1], [-0.47, 0.27], [-0.42, 0.42]]);
+        arm([[0.33, 0.1], [0.5, 0.2], [0.55, 0.02]]);
+        k.line([[-0.44, 0.24], [-0.49, 0.3]], gold, Math.max(1, r * 0.035));
+        k.line([[0.47, 0.17], [0.53, 0.23]], gold, Math.max(1, r * 0.035));
+        k.ellipse(-0.42, 0.42, 0.055, 0.05, skin);
         // Raised khopesh.
-        k.line([[0.28, 0.34], [0.6, 0.02]], gold, Math.max(2, r * 0.07));
-        k.path((p) => { p.M(0.59, 0.03); p.Q(0.83, -0.17, 0.73, -0.35); p.Q(0.7, -0.2, 0.54, -0.13); }, null, "#e9d49a", Math.max(1.5, r * 0.05));
+        k.line([[0.52, 0.07], [0.62, -0.1]], gold, Math.max(2, r * 0.07));
+        k.ellipse(0.55, 0.02, 0.055, 0.055, skin);
+        k.path((p) => { p.M(0.61, -0.09); p.Q(0.87, -0.29, 0.76, -0.5); p.Q(0.72, -0.33, 0.56, -0.24); }, null, "#e9d49a", Math.max(1.5, r * 0.05));
       },
       skirmisher(c, pal, r, ts, h) {
         const k = rosterKit(c, pal, r, h), gold = "#d6ac54";
@@ -9959,18 +9984,19 @@
   };
 
   /* ============================================================
-   * THEME: YOKAI WAR — static vector portraits of eight figures from Japanese and East Asian folklore:
-   * Nurarihyon, the Nine-Tailed Fox, Gashadokuro, Yuki-Onna, Daitengu and San-me Karasu Tengu, Nekomata,
-   * Shuten-Doji and Hone-Onna, and Zhong Kui.
+   * THEME: YOKAI WAR — static vector portraits of figures from Japanese and East Asian folklore. The
+   * Sovereign and Reaper are side-specific: light fields Nurarihyon and the Nine-Tailed Fox, dark fields
+   * Shuten-Doji and the Slaughter Oni (杀戮鬼, an original oni design). Both sides share Gashadokuro,
+   * Yuki-Onna, Daitengu and San-me Karasu Tengu, Nekomata, Shuten-Doji and Hone-Onna, and Zhong Kui.
    * ============================================================ */
   SG.THEMES.hyakki = {
     id: "hyakki",
     name: { en: "Yokai War", fr: "Guerre des Yokai", zh: "妖族大战", ar: "حرب اليوكاي" },
     description: {
-      en: "Eight figures are pictured: 滑头鬼 (Nurarihyon) with a kiseru and onibi rings; 九尾妖狐 (Nine-Tailed Fox) with nine tails, a spirit fan, and 狐火 (Kitsunebi); 饿者骷髅 (Gashadokuro) amid nether mist; 雪女 (Yuki-Onna) with snow crystals; 大天狗 and 三眼乌天狗 (Daitengu and San-me Karasu Tengu) with raven wings and a feather fan; 猫又 (Nekomata) with forked ghost-fire tails; 酒吞童子 (Shuten-Doji) beside 骨女 (Hone-Onna) and a bone lantern; and 钟馗 (Zhong Kui) in magistrate robes with a demon-slaying sword.",
-      fr: "Huit figures sont représentées : 滑头鬼 (Nurarihyon), son kiseru et ses anneaux d'onibi ; 九尾妖狐 (renard à neuf queues), avec son éventail spirituel et 狐火 (kitsunebi) ; 饿者骷髅 (Gashadokuro), dans les brumes infernales ; 雪女 (Yuki-Onna), avec ses cristaux de neige ; 大天狗 et 三眼乌天狗 (Daitengu et San-me Karasu Tengu), aux ailes de corbeau et à l'éventail de plumes ; 猫又 (Nekomata), aux queues fourchues de feu spectral ; 酒吞童子 (Shuten-Doji), auprès de 骨女 (Hone-Onna) et de sa lanterne d'os ; et 钟馗 (Zhong Kui), en robe de magistrat et armé de l'épée tueuse de démons.",
-      zh: "八位角色依次呈现：滑头鬼，手持烟管并伴有鬼火烟环；九尾妖狐，身后九尾、手持灵扇并有狐火；饿者骷髅现身冥雾；雪女与雪晶相伴；大天狗与三眼乌天狗展开鸦羽之翼并持羽扇；猫又拖着分叉鬼火尾；酒吞童子与骨女的白骨灯笼同框；钟馗身着判官官袍、持斩妖剑。",
-      ar: "تُصوَّر ثماني شخصيات: 滑头鬼 (نوراريهيون) مع غليون كيسيرو وحلقات أونيبي؛ 九尾妖狐 (الثعلب ذو الذيول التسعة) بمروحة روحية ونيران 狐火 (كيتسونِبي)؛ 饿者骷髅 (غاشادوكورو) وسط الضباب؛ 雪女 (يوكي-أونا) مع بلورات الثلج؛ 大天狗 و三眼乌天狗 (دايتينغو وسان-مي كاراسو تينغو) بأجنحة الغراب ومروحة الريش؛ 猫又 (نيكوماتا) بذيول متشعبة من نار الأشباح؛ 酒吞童子 (شوتن-دوجي) إلى جانب 骨女 (هوني-أونا) وفانوس عظمي؛ و钟馗 (زونغ كوي) بثياب قاضٍ وسيف قاتل للشياطين.",
+      en: "The Sovereign and Reaper change with each side: the light side fields 滑头鬼 (Nurarihyon) with a kiseru and onibi rings and the fox-faced 九尾妖狐 (Nine-Tailed Fox) with nine tails, a spirit fan, and 狐火 (Kitsunebi); the dark side fields 酒吞童子 (Shuten-Doji), the oni king enthroned with a sake dish and war fan, and 杀戮鬼 (Slaughter Oni), a horned, oni-masked reaper in dark armor with a great scythe. Both sides share 饿者骷髅 (Gashadokuro) amid nether mist; 雪女 (Yuki-Onna) with snow crystals; 大天狗 and 三眼乌天狗 (Daitengu and San-me Karasu Tengu) with raven wings and a feather fan; 猫又 (Nekomata) with forked ghost-fire tails; 酒吞童子 (Shuten-Doji) beside 骨女 (Hone-Onna) and a bone lantern; and 钟馗 (Zhong Kui) in magistrate robes with a demon-slaying sword.",
+      fr: "Le Souverain et la Faucheuse changent selon le camp : le camp clair aligne 滑头鬼 (Nurarihyon), son kiseru et ses anneaux d'onibi, et 九尾妖狐 (renard à neuf queues), à tête de renard, avec son éventail spirituel et 狐火 (kitsunebi) ; le camp sombre aligne 酒吞童子 (Shuten-Doji), roi des oni trônant avec sa coupe de saké et son éventail de guerre, et 杀戮鬼 (Oni du carnage), faucheur cornu au masque d'oni, en armure sombre et armé d'une grande faux. Les deux camps partagent 饿者骷髅 (Gashadokuro), dans les brumes infernales ; 雪女 (Yuki-Onna), avec ses cristaux de neige ; 大天狗 et 三眼乌天狗 (Daitengu et San-me Karasu Tengu), aux ailes de corbeau et à l'éventail de plumes ; 猫又 (Nekomata), aux queues fourchues de feu spectral ; 酒吞童子 (Shuten-Doji), auprès de 骨女 (Hone-Onna) et de sa lanterne d'os ; et 钟馗 (Zhong Kui), en robe de magistrat et armé de l'épée tueuse de démons.",
+      zh: "君主与死神因阵营而异：光明方为手持烟管、伴有鬼火烟环的滑头鬼，以及狐面九尾、手持灵扇并有狐火的九尾妖狐；黑暗方为端坐王座、手持酒盏与军配团扇的鬼王酒吞童子，以及头生鬼角、戴鬼面、身披黑甲、手持巨镰的杀戮鬼。双方共有：饿者骷髅现身冥雾；雪女与雪晶相伴；大天狗与三眼乌天狗展开鸦羽之翼并持羽扇；猫又拖着分叉鬼火尾；酒吞童子与骨女的白骨灯笼同框；钟馗身着判官官袍、持斩妖剑。",
+      ar: "يتغيّر السيّد والحاصد بحسب الجانب: يقدّم الجانب المضيء 滑头鬼 (نوراريهيون) مع غليون كيسيرو وحلقات أونيبي، و九尾妖狐 (الثعلب ذو الذيول التسعة) بوجه ثعلب وذيوله التسعة ومروحة روحية ونيران 狐火 (كيتسونِبي)؛ ويقدّم الجانب المظلم 酒吞童子 (شوتن-دوجي) ملك الأوني جالساً على عرشه بكأس ساكي ومروحة حرب، و杀戮鬼 (أوني المذبحة) حاصداً بقرنين وقناع أوني ودرع داكن ومنجل عظيم. ويتشارك الجانبان 饿者骷髅 (غاشادوكورو) وسط الضباب؛ و雪女 (يوكي-أونا) مع بلورات الثلج؛ و大天狗 و三眼乌天狗 (دايتينغو وسان-مي كاراسو تينغو) بأجنحة الغراب ومروحة الريش؛ و猫又 (نيكوماتا) بذيول متشعبة من نار الأشباح؛ و酒吞童子 (شوتن-دوجي) إلى جانب 骨女 (هوني-أونا) وفانوس عظمي؛ و钟馗 (زونغ كوي) بثياب قاضٍ وسيف قاتل للشياطين.",
     },
     painters: {
       sovereign(c, pal, r, ts, h) {
@@ -10003,9 +10029,27 @@
         }
         k.poly([[-0.25, -0.13], [-0.34, 0.68], [0.34, 0.68], [0.25, -0.13]], "#d55255");
         k.line([[-0.28, 0.2], [0.28, 0.2]], pal.bright, Math.max(1.5, r * 0.05));
-        k.ellipse(0, -0.39, 0.22, 0.25, "#f1d5bb");
-        k.path((p) => { p.M(-0.2, -0.48); p.Q(-0.05, -0.75, 0.18, -0.56); p.L(0.23, -0.2); p.Q(0.04, -0.38, -0.2, -0.48); p.Z(); }, "#26202a");
-        k.poly([[0.19, -0.57], [0.39, -0.5], [0.19, -0.29], [0.08, -0.44]], "#fff2d0");
+        k.poly([[-0.14, -0.13], [0, 0.08], [0.14, -0.13]], "#fff4e2");
+        // Unmistakable fox head: tall dark-tipped ears, orange mask, white cheek ruff and pointed muzzle.
+        const fox = "#e2792f", cream = "#fff4e2", tipInk = "#2a1b1d";
+        for (const s of [-1, 1]) {
+          k.poly([[s * 0.06, -0.58], [s * 0.3, -0.95], [s * 0.3, -0.47]], fox);
+          k.poly([[s * 0.11, -0.6], [s * 0.27, -0.84], [s * 0.27, -0.55]], cream, null);
+          k.poly([[s * 0.255, -0.87], [s * 0.3, -0.95], [s * 0.3, -0.83]], tipInk, null);
+        }
+        k.path((p) => { p.M(-0.3, -0.5); p.Q(0, -0.68, 0.3, -0.5); p.L(0.33, -0.3); p.L(0.09, -0.12); p.L(0, -0.06); p.L(-0.09, -0.12); p.L(-0.33, -0.3); p.Z(); }, fox);
+        for (const s of [-1, 1]) k.poly([[s * 0.33, -0.3], [s * 0.42, -0.19], [s * 0.2, -0.17], [s * 0.1, -0.27]], cream);
+        k.poly([[-0.1, -0.33], [0.1, -0.33], [0.07, -0.13], [0, -0.07], [-0.07, -0.13]], cream);
+        k.ellipse(0, -0.09, 0.045, 0.032, tipInk, null);
+        // Slanted gold eyes under red kitsune markings, a flame jewel and whiskers.
+        for (const s of [-1, 1]) {
+          k.path((p) => { p.M(s * 0.05, -0.38); p.Q(s * 0.13, -0.45, s * 0.22, -0.43); p.Q(s * 0.15, -0.36, s * 0.05, -0.38); p.Z(); }, "#ffd34a", tipInk, Math.max(0.8, r * 0.02));
+          k.line([[s * 0.13, -0.39], [s * 0.15, -0.42]], tipInk, Math.max(1, r * 0.03));
+          k.line([[s * 0.07, -0.47], [s * 0.21, -0.52]], "#d32f36", Math.max(1.1, r * 0.035));
+          k.line([[s * 0.06, -0.15], [s * 0.3, -0.16]], tipInk, Math.max(0.6, r * 0.014));
+          k.line([[s * 0.06, -0.12], [s * 0.28, -0.08]], tipInk, Math.max(0.6, r * 0.014));
+        }
+        k.path((p) => { p.M(0, -0.62); p.Q(0.05, -0.55, 0, -0.5); p.Q(-0.05, -0.55, 0, -0.62); p.Z(); }, gold, null);
         k.ring(0.29, 0.02, 0.085, gold, Math.max(1.2, r * 0.04));
         k.line([[0.29, 0.1], [0.29, 0.19]], gold, Math.max(1, r * 0.03));
         // Golden spirit fan and dancing foxfire.
@@ -10166,6 +10210,96 @@
           k.ellipse(x - 0.035, 0.94, 0.018, 0.023, "#fff3be", null);
           k.ellipse(x + 0.035, 0.94, 0.018, 0.023, "#fff3be", null);
         }
+      },
+    },
+    // The dark side fields its own Sovereign and Reaper (chosen by piece ownership, not board position);
+    // the light side, and every other role on both sides, use the shared painters above.
+    sidePainters: {
+      dark: {
+        sovereign(c, pal, r, ts, h) {
+          const k = rosterKit(c, pal, r, h), gold = "#e2b64f", skin = "#c4503f", mane = "#e0662c", horn = "#efe2c0", brow = "#3a1418";
+          // 酒吞童子 (Shuten-Doji), king of the oni, enthroned before a gold-trimmed lacquer back.
+          k.poly([[-0.66, -0.5], [0, -0.68], [0.66, -0.5], [0.72, 0.86], [-0.72, 0.86]], "#2a1519");
+          k.poly([[-0.56, -0.44], [0, -0.58], [0.56, -0.44], [0.6, 0.78], [-0.6, 0.78]], null, gold, Math.max(1, r * 0.03));
+          // Wild flame-red mane.
+          k.poly([[-0.36, -0.2], [-0.48, -0.42], [-0.36, -0.46], [-0.42, -0.66], [-0.24, -0.6], [-0.18, -0.78], [-0.06, -0.62], [0, -0.8], [0.06, -0.62], [0.18, -0.78], [0.24, -0.6], [0.42, -0.66], [0.36, -0.46], [0.48, -0.42], [0.36, -0.2], [0.2, -0.12], [-0.2, -0.12]], mane);
+          // Regal layered robes, broad shoulder mantle, gold obi and crests.
+          k.poly([[-0.32, -0.12], [-0.6, 0.82], [0.6, 0.82], [0.32, -0.12]], pal.mid);
+          for (const s of [-1, 1]) k.poly([[s * 0.3, -0.13], [s * 0.64, -0.02], [s * 0.58, 0.16], [s * 0.3, 0.1]], pal.deep, gold, Math.max(1, r * 0.03));
+          k.poly([[-0.16, -0.12], [0, 0.18], [0.16, -0.12]], "#f2e4c4");
+          k.line([[-0.16, -0.12], [0, 0.18], [0.16, -0.12]], gold, Math.max(1.2, r * 0.035));
+          k.poly([[-0.42, 0.3], [0.42, 0.3], [0.45, 0.42], [-0.45, 0.42]], gold);
+          k.line([[-0.43, 0.36], [0.43, 0.36]], pal.bright, Math.max(1, r * 0.03));
+          for (let i = 0; i < 3; i++) k.glyph(-0.3 + i * 0.3, 0.62, i % 2 ? pal.bright : gold, 0.04);
+          // Red oni face, great curved horns and a jewelled gold crown band.
+          k.ellipse(0, -0.35, 0.2, 0.22, skin);
+          for (const s of [-1, 1]) k.path((p) => { p.M(s * 0.1, -0.52); p.Q(s * 0.3, -0.62, s * 0.36, -0.94); p.Q(s * 0.4, -0.66, s * 0.19, -0.46); p.Z(); }, horn);
+          k.poly([[-0.19, -0.5], [-0.12, -0.6], [0, -0.52], [0.12, -0.6], [0.19, -0.5], [0.17, -0.44], [-0.17, -0.44]], gold);
+          k.ellipse(0, -0.5, 0.035, 0.035, pal.bright, null);
+          k.eye(-0.09, -0.34, "#ffd84a"); k.eye(0.09, -0.34, "#ffd84a");
+          for (const s of [-1, 1]) {
+            k.line([[s * 0.17, -0.43], [s * 0.03, -0.39]], brow, Math.max(1.2, r * 0.035));
+            k.poly([[s * 0.07, -0.215], [s * 0.05, -0.16], [s * 0.03, -0.205]], "#fff6e0", null);
+          }
+          k.path((p) => { p.M(-0.09, -0.22); p.Q(0, -0.17, 0.09, -0.22); }, null, brow, Math.max(1, r * 0.03));
+          // Right hand lifts a vast vermilion sakazuki of sake; left hand holds a gold gunbai war fan.
+          k.line([[0.56, 0.12], [0.62, -0.04]], skin, Math.max(2.2, r * 0.08));
+          k.poly([[0.58, -0.1], [0.7, -0.1], [0.68, -0.05], [0.6, -0.05]], "#a91f27");
+          k.ellipse(0.64, -0.16, 0.24, 0.075, "#c8282f");
+          k.ellipse(0.64, -0.18, 0.17, 0.04, "#f6eccd", null);
+          k.ellipse(0.64, -0.16, 0.24, 0.075, null, gold, Math.max(1, r * 0.028));
+          k.line([[-0.66, 0.08], [-0.6, 0.38]], "#6b4a2c", Math.max(1.8, r * 0.055));
+          k.ellipse(-0.68, -0.12, 0.17, 0.2, gold);
+          k.ellipse(-0.68, -0.12, 0.1, 0.12, pal.deep, null);
+          k.ring(-0.68, -0.12, 0.06, pal.bright, Math.max(1, r * 0.03));
+          k.ellipse(-0.61, 0.24, 0.06, 0.06, skin);
+        },
+        reaper(c, pal, r, ts, h) {
+          const k = rosterKit(c, pal, r, h), steel = "#d3d7de", armor = "#2b2a33", plate = "#3a3844", horn = "#ece0c2", mask = "#c3262d", glare = "#ffd84a", dark = "#1a0a0c", gold = "#d9b04d";
+          // 杀戮鬼 (Slaughter Oni): a tattered war cloak lined in the side colour.
+          k.path((p) => { p.M(-0.3, -0.1); p.L(-0.7, 0.86); p.L(-0.5, 0.74); p.L(-0.36, 0.9); p.L(-0.18, 0.76); p.L(0, 0.92); p.L(0.18, 0.76); p.L(0.36, 0.9); p.L(0.5, 0.74); p.L(0.7, 0.86); p.L(0.3, -0.1); p.Z(); }, pal.deep);
+          // Great reaping scythe: shaft in the right fist, crescent blade sweeping out past the shoulder.
+          k.line([[0.66, 0.9], [0.56, -0.84]], "#3b2a22", Math.max(2.2, r * 0.07));
+          k.path((p) => { p.M(0.55, -0.82); p.Q(0.98, -0.86, 1.12, -0.42); p.Q(0.92, -0.64, 0.57, -0.64); p.Z(); }, steel);
+          k.path((p) => { p.M(0.6, -0.66); p.Q(0.9, -0.64, 1.08, -0.46); }, null, pal.bright, Math.max(1, r * 0.03));
+          // Dark lamellar cuirass laced in the side colour, with hanging kusazuri plates.
+          k.poly([[-0.3, -0.12], [-0.34, 0.48], [0.34, 0.48], [0.3, -0.12]], armor);
+          for (let i = 0; i < 4; i++) { const y = 0.0 + i * 0.12; k.line([[-0.31 - i * 0.008, y], [0.31 + i * 0.008, y]], pal.bright, Math.max(0.9, r * 0.025)); }
+          for (let i = 0; i < 3; i++) {
+            const x = -0.3 + i * 0.2;
+            k.poly([[x, 0.48], [x + 0.2, 0.48], [x + 0.22, 0.78], [x - 0.02, 0.78]], plate);
+            k.line([[x + 0.01, 0.63], [x + 0.19, 0.63]], pal.mid, Math.max(0.9, r * 0.025));
+          }
+          // Broad sode shoulder plates.
+          for (const s of [-1, 1]) {
+            k.poly([[s * 0.26, -0.14], [s * 0.56, -0.06], [s * 0.52, 0.3], [s * 0.24, 0.2]], plate);
+            for (let i = 0; i < 3; i++) k.line([[s * 0.26, -0.04 + i * 0.1], [s * 0.52, 0.04 + i * 0.1]], pal.bright, Math.max(0.9, r * 0.025));
+          }
+          // Gauntlets: right fist grips the shaft, left fist clenched for the kill.
+          k.line([[0.48, 0.22], [0.6, 0.12]], armor, Math.max(2.4, r * 0.09));
+          k.ellipse(0.61, 0.09, 0.075, 0.07, armor);
+          k.line([[-0.48, 0.26], [-0.56, 0.4]], armor, Math.max(2.4, r * 0.09));
+          k.ellipse(-0.57, 0.42, 0.075, 0.07, armor);
+          // Kabuto helmet, neck guard and towering demon horns.
+          k.poly([[-0.3, -0.36], [0.3, -0.36], [0.34, -0.14], [-0.34, -0.14]], plate);
+          for (const y of [-0.29, -0.21]) k.line([[-0.3, y], [0.3, y]], pal.bright, Math.max(0.9, r * 0.025));
+          for (const s of [-1, 1]) k.path((p) => { p.M(s * 0.1, -0.58); p.Q(s * 0.44, -0.6, s * 0.5, -0.98); p.Q(s * 0.32, -0.74, s * 0.18, -0.5); p.Z(); }, horn);
+          k.path((p) => { p.M(-0.24, -0.42); p.Q(-0.26, -0.72, 0, -0.72); p.Q(0.26, -0.72, 0.24, -0.42); p.Z(); }, armor);
+          for (const s of [-1, 1]) k.poly([[s * 0.22, -0.55], [s * 0.36, -0.5], [s * 0.3, -0.38], [s * 0.2, -0.42]], plate);
+          k.line([[-0.22, -0.5], [0.22, -0.5]], gold, Math.max(1, r * 0.03));
+          // Snarling crimson oni mask with glaring eyes and fangs.
+          k.path((p) => { p.M(-0.2, -0.49); p.L(0.2, -0.49); p.Q(0.24, -0.3, 0.13, -0.17); p.L(0, -0.13); p.L(-0.13, -0.17); p.Q(-0.24, -0.3, -0.2, -0.49); p.Z(); }, mask);
+          for (const s of [-1, 1]) {
+            k.poly([[s * 0.04, -0.4], [s * 0.17, -0.44], [s * 0.14, -0.36]], glare, dark, Math.max(0.8, r * 0.02));
+            k.line([[s * 0.03, -0.44], [s * 0.19, -0.49]], dark, Math.max(1.2, r * 0.035));
+          }
+          k.poly([[-0.03, -0.35], [0.03, -0.35], [0.05, -0.28], [-0.05, -0.28]], "#8f1b22", null);
+          k.path((p) => { p.M(-0.12, -0.25); p.Q(0, -0.2, 0.12, -0.25); p.L(0.09, -0.19); p.Q(0, -0.16, -0.09, -0.19); p.Z(); }, dark, null);
+          for (const s of [-1, 1]) {
+            k.poly([[s * 0.08, -0.245], [s * 0.065, -0.185], [s * 0.04, -0.235]], "#fff6e0", null);
+            k.poly([[s * 0.03, -0.17], [s * 0.015, -0.225], [s * 0.0, -0.18]], "#fff6e0", null);
+          }
+        },
       },
     },
   };

@@ -1707,7 +1707,7 @@
       const cc = cellCenter(m.row, m.col);
       ctx.globalAlpha = 0.55; ctx.strokeStyle = hexToRgba(glyphColor(m.side).glow, 0.9); ctx.setLineDash([4, 3]); ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(cc.x, cc.y, TILE * 0.40, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
-      ctx.globalAlpha = 0.26; ctx.save(); ctx.translate(cc.x, cc.y); if (state.viewFlip) ctx.rotate(Math.PI); ctx.scale(0.78, 0.78); paintFigure(m.type, sidePalette(m.side), TILE * 0.33, ts); ctx.restore();
+      ctx.globalAlpha = 0.26; ctx.save(); ctx.translate(cc.x, cc.y); if (state.viewFlip) ctx.rotate(Math.PI); ctx.scale(0.78, 0.78); paintFigure(m.type, sidePalette(m.side), TILE * 0.33, ts, ctx, m.side); ctx.restore();
     }
     ctx.globalAlpha = 0.95; ctx.setLineDash([]);
     for (const d of fc.deaths) {
@@ -1860,7 +1860,7 @@
       ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(0, 0, r * 1.85, 0, Math.PI * 2); ctx.fill();
     }
     ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 3;
-    paintFigure(p.type, pal, r, ts);
+    paintFigure(p.type, pal, r, ts, ctx, p.side);
     ctx.shadowBlur = 0;
 
     // hit flash overlay
@@ -1909,6 +1909,8 @@
 
   // Figures are drawn by the active visual theme (themes.js). Missing or broken painters fall back to
   // classic, and if themes.js is unavailable entirely a self-contained glowing disc is drawn instead.
+  // A theme may also give a side its own figure for a role via `sidePainters[side][type]`; the side is
+  // always the piece's owner (never its board position), so a flipped view keeps each side's art.
   const failedPainters = new Set();
   const FALLBACK_INITIALS = { sovereign: "S", reaper: "R", juggernaut: "J", trickster: "T", wildrider: "W", skirmisher: "K", harrower: "H", fury: "F" };
 
@@ -1948,7 +1950,7 @@
     c.fillText(letter, 0, r * 0.05);
   }
 
-  function paintFigure(type, pal, r, ts, c) {
+  function paintFigure(type, pal, r, ts, c, side) {
     c = c || ctx;
     ts = ts || 0;
     const themes = SG.THEMES || {};
@@ -1956,7 +1958,10 @@
     const theme = themes[(state && state.theme) || activeThemeId || "classic"] || themes.classic;
     const fallback = classic[type] || classic.default;
     const candidates = [];
-    const primary = (theme && theme.painters && theme.painters[type]) || fallback;
+    const own = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);
+    const sideSet = side && theme && own(theme.sidePainters, side) ? theme.sidePainters[side] : null;
+    const sidePainter = own(sideSet, type) && typeof sideSet[type] === "function" ? sideSet[type] : null;
+    const primary = sidePainter || (theme && theme.painters && theme.painters[type]) || fallback;
     if (primary) candidates.push(primary);
     if (fallback && fallback !== primary) candidates.push(fallback);
     c.save();
@@ -1990,12 +1995,13 @@
     const halo = lc.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 1.7);
     halo.addColorStop(0, hexToRgba(colors.glow, 0.4)); halo.addColorStop(1, hexToRgba(colors.glow, 0));
     lc.fillStyle = halo; lc.beginPath(); lc.arc(0, 0, r * 1.7, 0, Math.PI * 2); lc.fill();
-    paintFigure(type, pal, r, 0, lc);
+    paintFigure(type, pal, r, 0, lc, side);
     lc.restore();
   }
 
   // Static icon images are cached per (theme, role, side, backing size). Icons are always painted at
-  // ts = 0 from fixed side palettes, and painters are deterministic (no randomness, no text/web
+  // ts = 0 from fixed side palettes (and, where a theme defines them, side-specific painters, which is
+  // why the side must stay part of the key), and painters are deterministic (no randomness, no text/web
   // fonts), so these are all the inputs. Entries also remember the theme object they were painted
   // from, so a replaced theme definition is never served stale. Animated board figures are NOT cached.
   // Bounded LRU: 12 themes x 8 role/side pairs at 52px fits comfortably (~10 KB per image).
