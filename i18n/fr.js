@@ -91,8 +91,6 @@ window.SG.I18N_DICT.fr = {
   "title.revertOnline": "Indisponible en ligne — les deux joueurs partagent la même chronologie",
   "title.options": "Options",
   "title.bid": "Miser des cristaux pour forcer l'ordre de jeu (le plus offrant joue en premier)",
-  "btn.mute": "Couper le son",
-  "btn.unmute": "Activer le son",
   "btn.bid": "Initiative : {n}◆",
   "btn.helpGame": "Aide",
   "btn.quit": "Menu principal",
@@ -275,7 +273,6 @@ window.SG.I18N_DICT.fr = {
   "options.title": "RITES D'ACCÈS",
   "options.subtitle": "Règle le tempo et la lisibilité des Enfers.",
   "options.speed": "Vitesse de bataille",
-  "options.mute": "Couper le son",
   "options.reduceMotion": "Réduire les animations (sans tremblement, flash ni zoom)",
   "options.glyphs": "Glyphes daltoniens des camps (▲ Umbra / ▽ Ember)",
 

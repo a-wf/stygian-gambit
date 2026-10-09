@@ -583,7 +583,7 @@
     piece.dashMeta = meta || { kind: "move" };
     if (meta && meta.kind === "tether") { spawnDissolve(fromX, fromY, piece.side); spawnConverge(dest.x, dest.y, piece.side); }
     else spawnDustPuff(fromX, fromY, piece.side, 4);
-    audio.dash();
+
   }
   SG.startDash = startDash;
 
@@ -668,7 +668,7 @@
       setCaption(t("note.unward", { who: describePiece(piece) }));
     } else if (state.aegis[side] > 0) {
       piece.warded = true; piece.wardRound = state.roundNumber; state.aegis[side]--;
-      bumpStat(side, "aegisUsed"); audio.boon();
+      bumpStat(side, "aegisUsed");
       state.undoStack.push({ type: "ward", pieceId: piece.id });
       setCaption(t("note.ward", { who: describePiece(piece) }));
     } else setCaption(t("note.noAegis"));
@@ -982,7 +982,7 @@
           if (Math.random() < 0.5) {
             spawnSlash(piece, o, ts, "normal");
             spawnDamageText(o.x, o.y - 6, t("fx.dodged"), "#9a8fb0");
-            audio.dash();
+
           } else {
             spawnSlash(piece, o, ts, "big");
             strikeKill(o, piece, ts);
@@ -1004,7 +1004,7 @@
     if (!inRange) {
       spawnSlash(piece, { x: aimX, y: aimY }, ts, "normal");
       spawnDamageText(aimX, aimY, t("fx.shadow"), "#9a8fb0");
-      audio.dash();
+
       const advancesOnStrike = defs.attackKind === "melee" || defs.attackKind === "pawnDiag" ||
         (defs.strikeAoe && cmd.reaperMode === "advance");
       if (advancesOnStrike && inBounds(cmd.row, cmd.col) &&
@@ -1074,7 +1074,7 @@
       state.pendingBeat = Math.max(state.pendingBeat || 0, 120);
       spawnDamageText(target.x, target.y - 6, t("fx.aegis"), "#e8c657");
       bumpStat(target.side, "aegisBroken");
-      audio.special();
+
       logEvent(t("log.aegisBlock", { who: describePiece(target) }));
       syncSidePanels();
       return "blocked";
@@ -1092,7 +1092,7 @@
       state.pendingBeat = Math.max(state.pendingBeat || 0, 120);
       triggerZoom(target.x, target.y, 0.06);
       spawnDamageText(target.x, target.y - 6, t("fx.lifeLost"), "#c98bd1");
-      audio.hit();
+
       logEvent(t(target.lives === 1 ? "log.reels1" : "log.reelsN", { who: describePiece(target), n: target.lives }));
     }
     syncSidePanels();
@@ -1109,7 +1109,7 @@
       spawnShockwave(piece.x, piece.y, "#e8c657", ts, { maxRadius: 54, durationMs: 440 });
       spawnDamageText(piece.x, piece.y - 6, t("fx.aegis"), "#e8c657");
       bumpStat(piece.side, "aegisBroken");
-      audio.special();
+
       logEvent(t("log.aegisAbyss", { who: describePiece(piece) }));
       syncSidePanels();
       return false;
@@ -1132,7 +1132,7 @@
     state.pendingBeat = Math.max(state.pendingBeat || 0, royal ? 300 : 140);
     triggerZoom(target.x, target.y, royal ? 0.16 : 0.07);
     spawnDamageText(target.x, target.y - 8, t("fx.slain"), "#ff6a6a");
-    audio.death();
+
     logEvent(killerSide ? t("log.slainBy", { who: describePiece(target), side: sideLabel(killerSide) }) : t("log.slain", { who: describePiece(target) }));
     bumpStat(killerSide, "kills");
     bumpStat(target.side, "losses");
@@ -1149,7 +1149,7 @@
         spawnDamageText(BOARD_PX / 2, BOARD_PX * 0.26, t("fx.souls", { n: chain, bonus }), "#e8c657", true);
         state.shake = Math.min(15, state.shake + chain);
         state.flash = Math.min(1, state.flash + 0.04 * chain);
-        audio.combo(chain);
+
       }
       syncSidePanels();
     }
@@ -1217,13 +1217,13 @@
       saveStore("sg.records", rec);
       state.lastRecord = slot;
     }
-    audio.gameOver();
+
     showGameOver();
   }
 
   /* ---- Chambers of the Descent (roguelike run) ---- */
   function newRun() { return { active: true, chamber: 0, boons: {}, botBoons: {}, carriedCrystals: 0 }; }
-  function startDescent() { audio._ensure(); runState = newRun(); startChamber(); }
+  function startDescent() {  runState = newRun(); startChamber(); }
   function startChamber() {
     const cfg = CHAMBERS[runState.chamber];
     startMatch("bot", "dark", cfg.hazards, { run: runState, difficulty: cfg.difficulty, persona: cfg.persona, hazards: cfg.hazards });
@@ -1243,7 +1243,7 @@
       if (run.chamber >= CHAMBERS.length) {
         run.active = false; awardObols(true, run.chamber);
         state.scene = "gameover"; state.winnerSide = state.humanSide; state.runOutcome = "victory";
-        audio.gameOver(); showGameOver();
+         showGameOver();
       } else {
         grantBotBoon(run);
         openBoonDraft(run);
@@ -1251,7 +1251,7 @@
     } else {
       run.active = false; awardObols(false, run.chamber);
       state.scene = "gameover"; state.winnerSide = winnerSide; state.runOutcome = "defeat";
-      audio.gameOver(); showGameOver();
+       showGameOver();
     }
   }
   function openBoonDraft(run) {
@@ -1300,10 +1300,6 @@
     state.reduceMotion = o.reduceMotion || false;
     state.battleSpeed = o.battleSpeed || 1;
     state.colorGlyphs = o.colorGlyphs || false;
-    if (typeof o.muted === "boolean") {
-      audio.setMuted(o.muted);
-      if (dom.btnMute) dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
-    }
     state.firstSide = config.firstSide || "light";
     state.viewFlip = mySide === "light";           // each player sees their own army at the bottom
     state.aegisMax = { light: state.aegis.light, dark: state.aegis.dark };
@@ -1368,7 +1364,7 @@
   }
 
   /* ---- Trials + Daily Gambit launchers ---- */
-  function startTrial(scenario) { audio._ensure(); startMatch("bot", scenario.humanSide, scenario.furies, { scenario }); }
+  function startTrial(scenario) {  startMatch("bot", scenario.humanSide, scenario.furies, { scenario }); }
   function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
   function dailySeed() { const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
   function dailyKey() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
@@ -1385,7 +1381,7 @@
       const protectedPiece = sc.pieces.find(p => p.side !== sc.humanSide && p.type !== "sovereign" && p.type !== "reaper");
       if (protectedPiece) protectedPiece.warded = true;
     }
-    audio._ensure();
+
     startMatch("bot", sc.humanSide, sc.furies, { scenario: sc });
   }
   function recordDaily(won) {
@@ -1461,7 +1457,7 @@
     spawnShockwave(p.x, p.y, glyphColor(side).glow, state.lastTs, { maxRadius: 54, durationMs: 470 });
     spawnDamageText(p.x, p.y - 6, t("fx.risen"), glyphColor(side).glow);
     bumpStat(side, "summons");
-    audio.special();
+
     logEvent(t("log.summon", { side: sideLabel(side), piece: pieceName(type) }));
     syncSidePanels();
     return p;
@@ -1483,7 +1479,7 @@
     state.furyCount++;
     spawnBurstParticles(p.x, p.y, "neutral", 24);
     spawnShockwave(p.x, p.y, "#5be07a", state.lastTs || ts, { maxRadius: 56, durationMs: 480 });
-    audio.special();
+
     logEvent(t("log.furyRise"));
   }
 
@@ -1598,61 +1594,6 @@
   function drawAmbientParticles() {
     for (const p of ambientParticles) { ctx.beginPath(); ctx.fillStyle = p.warm ? `rgba(232,98,44,${p.alpha})` : `rgba(160,130,220,${p.alpha})`; ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); }
   }
-
-  /* ============================================================
-   * AUDIO
-   * ============================================================ */
-  function AudioEngine() { this.ctx = null; this.master = null; this.muted = false; this.droneNodes = null; }
-  AudioEngine.prototype._ensure = function () {
-    if (this.ctx) return;
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    this.ctx = new Ctx();
-    this.master = this.ctx.createGain();
-    this.master.gain.value = this.muted ? 0 : 0.55;
-    this.master.connect(this.ctx.destination);
-    this._startDrone();
-  };
-  AudioEngine.prototype._tone = function (freq, durMs, opts) {
-    if (!this.ctx) return; opts = opts || {};
-    const t0 = this.ctx.currentTime, osc = this.ctx.createOscillator(), gain = this.ctx.createGain();
-    osc.type = opts.type || "sine";
-    osc.frequency.setValueAtTime(freq, t0);
-    if (opts.freqTo) osc.frequency.exponentialRampToValueAtTime(Math.max(1, opts.freqTo), t0 + durMs / 1000);
-    const peak = opts.gain != null ? opts.gain : 0.3;
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + durMs / 1000);
-    osc.connect(gain); gain.connect(this.master);
-    osc.start(t0); osc.stop(t0 + durMs / 1000 + 0.02);
-  };
-  AudioEngine.prototype._noise = function (durMs, opts) {
-    if (!this.ctx) return; opts = opts || {};
-    const t0 = this.ctx.currentTime, n = Math.floor(this.ctx.sampleRate * (durMs / 1000));
-    const buf = this.ctx.createBuffer(1, n, this.ctx.sampleRate), data = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
-    const src = this.ctx.createBufferSource(); src.buffer = buf;
-    const filter = this.ctx.createBiquadFilter(); filter.type = opts.filterType || "highpass"; filter.frequency.value = opts.freq || 800;
-    const gain = this.ctx.createGain(); gain.gain.value = opts.gain != null ? opts.gain : 0.25;
-    src.connect(filter); filter.connect(gain); gain.connect(this.master); src.start(t0);
-  };
-  AudioEngine.prototype._startDrone = function () {
-    if (!this.ctx || this.droneNodes) return;
-    const g = this.ctx.createGain(); g.gain.value = 0.045; g.connect(this.master);
-    const o1 = this.ctx.createOscillator(); o1.type = "sine"; o1.frequency.value = 55;
-    const o2 = this.ctx.createOscillator(); o2.type = "sine"; o2.frequency.value = 58;
-    o1.connect(g); o2.connect(g); o1.start(); o2.start();
-    this.droneNodes = [o1, o2, g];
-  };
-  AudioEngine.prototype.hit = function () { this._ensure(); this._tone(150, 90, { type: "sine", gain: 0.22, freqTo: 60 }); };
-  AudioEngine.prototype.dash = function () { this._ensure(); this._tone(320, 90, { type: "sawtooth", gain: 0.06, freqTo: 700 }); };
-  AudioEngine.prototype.death = function () { this._ensure(); this._noise(280, { freq: 300, filterType: "lowpass", gain: 0.32 }); this._tone(220, 320, { gain: 0.16, freqTo: 55 }); };
-  AudioEngine.prototype.boon = function () { this._ensure(); this._tone(660, 200, { gain: 0.2 }); this._tone(990, 260, { gain: 0.14 }); };
-  AudioEngine.prototype.special = function () { this._ensure(); this._noise(160, { freq: 1400, gain: 0.2 }); this._tone(880, 200, { gain: 0.14 }); };
-  AudioEngine.prototype.combo = function (chain) { this._ensure(); const semis = Math.min(chain, 10); this._tone(392 * Math.pow(2, semis / 12), 200, { gain: 0.16 }); };
-  AudioEngine.prototype.gameOver = function () { this._ensure(); [440, 330, 262, 196].forEach((f, i) => setTimeout(() => this._tone(f, 360, { gain: 0.2 }), i * 180)); };
-  AudioEngine.prototype.setMuted = function (m) { this.muted = m; if (this.master) this.master.gain.value = m ? 0 : 0.55; };
-  const audio = new AudioEngine();
 
   /* ============================================================
    * RENDERING — board
@@ -2504,12 +2445,12 @@
   ["startScreen","hud","gameOverScreen","planBar","boardActions","planLabel","btnWard","btnUndo","btnClear","btnValidate",
    "btnSummon","btnBid","crystalLight","crystalDark",
    "btnReplay","btnRevert","btnThreat","btnForesight","choiceScreen","choiceTitle","choiceSub","choiceOptions","choiceCancel",
-   "btnHotseat","btnVsBot","btnPlayAgain","btnMainMenu","btnMute","btnQuit","turnBanner","eventLog","winnerHeadline","furyToggle","hazardToggle","harrowerToggle",
+   "btnHotseat","btnVsBot","btnPlayAgain","btnMainMenu","btnQuit","turnBanner","eventLog","winnerHeadline","furyToggle","hazardToggle","harrowerToggle",
    "aegisLight","aegisDark","royalLight","royalDark","countLight","countDark","panelLight","panelDark","midPanel","titleSideLight","titleSideDark",
    "handoffScreen","handoffTitle","handoffText","btnHandoffReady",
    "btnHelp","btnHelpGame","helpScreen","btnHelpClose","ledger","hallRecord",
    "difficulty","persona","movesPerRound","btnTrials","btnDaily","trialsScreen","trialsList","btnTrialsClose","hazardToggle",
-   "btnOptions","btnOptionsGame","optionsScreen","btnOptionsClose","optMute","optReduceMotion","optColorGlyphs","optSpeed","optSpeedVal",
+   "btnOptions","btnOptionsGame","optionsScreen","btnOptionsClose","optReduceMotion","optColorGlyphs","optSpeed","optSpeedVal",
    "themeSelect","optThemeSelect",
    "btnDescend","btnMirror","boonScreen","boonList","boonTitle","mirrorScreen","btnMirrorClose","mirrorObols","mirrorUpgrades",
    "btnOnline","onlineScreen","onlineStatus","onlineSetup","onlineFury","onlineHarrower","btnCreateRoom","joinCode","btnJoinRoom","btnOnlineClose"].forEach(id => { dom[id] = document.getElementById(id); });
@@ -3029,28 +2970,18 @@
   /* ---- Rites of Access (options) ---- */
   function syncOptionsUI() {
     const o = loadStore("sg.options", {});
-    if (typeof o.muted === "boolean") {
-      audio.setMuted(o.muted);
-      if (dom.btnMute) dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
-    }
-    if (dom.optMute) dom.optMute.checked = !!audio.muted;
-    if (dom.btnMute) dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
     if (dom.optReduceMotion) dom.optReduceMotion.checked = !!o.reduceMotion;
     if (dom.optColorGlyphs) dom.optColorGlyphs.checked = !!o.colorGlyphs;
     if (dom.optSpeed) dom.optSpeed.value = o.battleSpeed || 1;
     if (dom.optSpeedVal) dom.optSpeedVal.textContent = (o.battleSpeed || 1) + "×";
   }
   function saveOptionsFromUI() {
-    const isMuted = dom.optMute ? dom.optMute.checked : false;
-    audio.setMuted(isMuted);
     const o = {
-      muted: audio.muted,
       reduceMotion: dom.optReduceMotion ? dom.optReduceMotion.checked : false,
       colorGlyphs: dom.optColorGlyphs ? dom.optColorGlyphs.checked : false,
       battleSpeed: dom.optSpeed ? parseFloat(dom.optSpeed.value) : 1,
     };
     saveStore("sg.options", o);
-    if (dom.btnMute) dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
     // apply live to the current match
     state.reduceMotion = o.reduceMotion; state.colorGlyphs = o.colorGlyphs; state.battleSpeed = o.battleSpeed;
     if (dom.optSpeedVal) dom.optSpeedVal.textContent = o.battleSpeed + "×";
@@ -3062,7 +2993,6 @@
   if (dom.optReduceMotion) dom.optReduceMotion.addEventListener("change", saveOptionsFromUI);
   if (dom.optColorGlyphs) dom.optColorGlyphs.addEventListener("change", saveOptionsFromUI);
   if (dom.optSpeed) dom.optSpeed.addEventListener("input", saveOptionsFromUI);
-  if (dom.optMute) dom.optMute.addEventListener("change", saveOptionsFromUI);
 
   /* ---- Piece theme picker (start screen + options) ---- */
   function themeDisplayName(id) {
@@ -3149,7 +3079,7 @@
     const cost = u.cost(lv);
     if ((m.obols || 0) < cost) return;
     m.obols -= cost; m[key + "Lv"] = lv + 1; saveStore("sg.mirror", m);
-    audio.boon(); refreshMirror(); refreshHallRecord();
+     refreshMirror(); refreshHallRecord();
   }
   if (dom.btnDescend) dom.btnDescend.addEventListener("click", () => startDescent());
 
@@ -3178,7 +3108,7 @@
   if (dom.btnOnline) dom.btnOnline.addEventListener("click", openOnline);
   if (dom.btnOnlineClose) dom.btnOnlineClose.addEventListener("click", () => { if (SG.Net) SG.Net.leave(); showStart(); });
   if (dom.btnCreateRoom) dom.btnCreateRoom.addEventListener("click", () => {
-    audio._ensure();
+
     if (dom.onlineStatus) dom.onlineStatus.textContent = t("online.creating");
     SG.Net.createRoom({ furies: dom.onlineFury && dom.onlineFury.checked, harrowerDrag: dom.onlineHarrower && dom.onlineHarrower.checked }, (err, res) => {
       if (err) { showNetError(err); return; }
@@ -3187,7 +3117,7 @@
     });
   });
   if (dom.btnJoinRoom) dom.btnJoinRoom.addEventListener("click", () => {
-    audio._ensure();
+
     const codeVal = dom.joinCode ? dom.joinCode.value : "";
     if (dom.onlineStatus) dom.onlineStatus.textContent = t("online.joining");
     SG.Net.joinRoom(codeVal, (err) => {
@@ -3211,14 +3141,6 @@
   });
   dom.btnValidate.addEventListener("click", () => onValidate());
   dom.btnHandoffReady.addEventListener("click", () => onHandoffReady());
-  dom.btnMute.addEventListener("click", () => {
-    audio.setMuted(!audio.muted);
-    dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
-    if (dom.optMute) dom.optMute.checked = audio.muted;
-    const savedOpts = loadStore("sg.options", {});
-    savedOpts.muted = audio.muted;
-    saveStore("sg.options", savedOpts);
-  });
   dom.btnQuit.addEventListener("click", () => showStart());
   dom.btnMainMenu.addEventListener("click", () => showStart());
   dom.btnPlayAgain.addEventListener("click", () => {
@@ -3226,8 +3148,8 @@
     else if (state.scenario && !state.scenario.daily) startTrial(state.scenario);
     else startMatch(state.mode, state.humanSide, state.furiesEnabled, { movesPerRound: state.movesPerRound, harrowerDrag: state.harrowerDragEnabled });
   });
-  dom.btnHotseat.addEventListener("click", () => { audio._ensure(); startMatch("hotseat", "light", dom.furyToggle && dom.furyToggle.checked, { harrowerDrag: dom.harrowerToggle && dom.harrowerToggle.checked }); });
-  dom.btnVsBot.addEventListener("click", () => { audio._ensure(); startMatch("bot", "dark", dom.furyToggle && dom.furyToggle.checked, { harrowerDrag: dom.harrowerToggle && dom.harrowerToggle.checked }); });
+  dom.btnHotseat.addEventListener("click", () => {  startMatch("hotseat", "light", dom.furyToggle && dom.furyToggle.checked, { harrowerDrag: dom.harrowerToggle && dom.harrowerToggle.checked }); });
+  dom.btnVsBot.addEventListener("click", () => {  startMatch("bot", "dark", dom.furyToggle && dom.furyToggle.checked, { harrowerDrag: dom.harrowerToggle && dom.harrowerToggle.checked }); });
 
   /* ============================================================
    * SCENE MANAGEMENT
@@ -3317,10 +3239,6 @@
     state.reduceMotion = o.reduceMotion || false;
     state.battleSpeed = o.battleSpeed || 1;
     state.colorGlyphs = o.colorGlyphs || false;
-    if (typeof o.muted === "boolean") {
-      audio.setMuted(o.muted);
-      if (dom.btnMute) dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
-    }
     if (mode === "bot") {
       state.difficulty = opts.difficulty || (dom.difficulty ? dom.difficulty.value : "normal");
       let persona = opts.persona || (dom.persona ? dom.persona.value : "balanced");
@@ -3407,7 +3325,6 @@
     refreshRoleNameLabels();
     if (!state) return;
     buildThemeOptions();
-    dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
     syncSidePanels();
     dom.btnSummon.textContent = t("btn.summon");
     dom.btnWard.textContent = t("btn.wardOff");

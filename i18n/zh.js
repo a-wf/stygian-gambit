@@ -92,8 +92,6 @@ window.SG.I18N_DICT.zh = {
   "title.revertOnline": "联机模式不可用——双方共享同一条时间线",
   "title.options": "选项",
   "title.bid": "投入水晶竞价以抢夺先手（出价高者先动）",
-  "btn.mute": "静音",
-  "btn.unmute": "取消静音",
   "btn.bid": "先手：{n}◆",
   "btn.helpGame": "帮助",
   "btn.quit": "主菜单",
@@ -276,7 +274,6 @@ window.SG.I18N_DICT.zh = {
   "options.title": "通行之仪",
   "options.subtitle": "调整冥界的节奏与可读性。",
   "options.speed": "战斗速度",
-  "options.mute": "静音",
   "options.reduceMotion": "减少动态效果（无震屏、闪光或缩放）",
   "options.glyphs": "色盲阵营标记（▲ 幽影 / ▽ 余烬）",
 

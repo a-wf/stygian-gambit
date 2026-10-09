@@ -93,8 +93,6 @@ window.SG.I18N_DICT.en = {
   "title.revertOnline": "Not available online — both players share one timeline",
   "title.options": "Options",
   "title.bid": "Bid crystals to force move order (highest bidder acts first)",
-  "btn.mute": "Mute",
-  "btn.unmute": "Unmute",
   "btn.bid": "Initiative: {n}◆",
   "btn.helpGame": "Help",
   "btn.quit": "Main Menu",
@@ -277,7 +275,6 @@ window.SG.I18N_DICT.en = {
   "options.title": "RITES OF ACCESS",
   "options.subtitle": "Tune the tempo and readability of the underworld.",
   "options.speed": "Battle speed",
-  "options.mute": "Mute sound",
   "options.reduceMotion": "Reduce motion (no screenshake, flash or zoom)",
   "options.glyphs": "Colorblind side glyphs (▲ Umbra / ▽ Ember)",
 
