@@ -307,6 +307,8 @@ window.SG.I18N_DICT.en = {
   "theme.celestial.desc": "Pantheon of ancient Chinese myth: Ksitigarbha Bodhisattva upon his thousand-petal lotus with nine-ring staff and wish-fulfilling jewel, the Monkey King on his somersault cloud, the horned Bull Demon King, three-eyed Erlang Shen, Nezha on Wind-Fire Wheels, heavenly halberdiers, Hou Yi the sun-shooting archer and Princess Iron Fan's cyclone.",
   "theme.hyakki.name": "Night Parade",
   "theme.hyakki.desc": "Legion of legendary Japanese yokai: Shuten-dōji the Demon King of Mt. Ōe with banded crimson horns, a golden sake cup and his colossal demonic sake gourd; white-haired cursed swordsman Onikiri sweeping twin katanas in a torn haori; Ibaraki-dōji with the lightning-wreathed spectral Hell Hand; raven-winged Daitengu in his tokin cap with the three-feather gale fan; Kasha the bipedal hellcat with flaming ears and a hellfire scythe, leaping from its spiked burning chariot; the Kamaitachi wind-sickle trio of masked weasel ninjas whirling four-bladed sickles; noble wolf archer Hakuro; and Yuki Onna the ethereal frost maiden.",
+  "theme.shadowshinobi.name": "Shadow Shinobi",
+  "theme.shadowshinobi.desc": "Masters of umbral stealth: the Shadow Grandmaster weaving shadow clones, the chain-whirling Kusarigama Reaper, armored Iron Wall Shinobi, the vanishing Smoke Phantom with decoy substitution log, spectral Shadow Beast wolf rider, four-bladed Fuuma Shuriken Striker, silent Umbral Dart Sniper, and the jointed Karakuri Puppet Assassin.",
 
   /* ---- trials & daily ---- */
   "trials.title": "TRIALS OF THE UNDERWORLD",

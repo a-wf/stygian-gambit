@@ -1,6 +1,8 @@
 /* Stygian Gambit — modular piece-theme engine.
  *
  * A theme is { id, name: {en, fr, zh, ar}, description: {…}, painters: { <pieceType>: fn } }.
+ * name/description may instead be i18n keys (e.g. "theme.<id>.name"); game.js resolves the
+ * "theme.<id>.name" / "theme.<id>.desc" dictionary entries first in either case.
  * Each painter is called as painter(c, pal, r, ts, helpers) with the canvas already translated
  * to the tile centre (and wrapped in save/restore by game.js). Figures should stay roughly within
  * -1.3r … 1.3r so they fit both board tiles and the 52px legend canvases.
@@ -12122,6 +12124,1004 @@
           srPetal(c, Math.cos(a) * r * 0.55, r * 0.45 + Math.sin(a) * r * 0.2, r * 0.05, a * 2, rgba(i % 2 ? HK_FROST : pal.bright, 0.65), null);
         }
         c.restore();
+      },
+    },
+  };
+
+  /* ============================================================
+   * THEME: SHADOW SHINOBI — an original umbral-stealth ninja order
+   * ============================================================ */
+  const SS_GARB = ["#3d3650", "#1a1624", "#060409"];
+  const SS_GARB_LIGHT = ["#554c6c", "#2a2438", "#0d0a14"];
+  const SS_STEEL = ["#f4f7fb", "#a7b0bf", "#3b4352"];
+  const SS_IRON = ["#959ba7", "#4b505c", "#16191f"];
+  const SS_WOOD = ["#d6ad78", "#8f663d", "#45291a"];
+  const SS_SKIN = ["#e8c6a3", "#c39676", "#7c5641"];
+  const SS_SHADE = ["#2c2440", "#100b1a", "#020104"];
+  const SS_PAPER = "#f2e8cd";
+  const SS_SEAL = "#c3242e";
+  const SS_UMBRA = "#8a5cff";  // umbral violet undertone
+  const SS_VENOM = "#a8ff4a";  // venom green
+
+  function ssSide(c, pal, x0, y0, x1, y1) { return nbCloth(c, x0, y0, x1, y1, [pal.bright, pal.mid, pal.deep]); }
+  function ssLine(c, pts) { c.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]); }
+  // Stroke the current path twice: ink outline, then colour (w px).
+  function ssInkStroke(c, h, w, color) { c.strokeStyle = h.INK; c.lineWidth = w + 1.8; c.stroke(); c.strokeStyle = color; c.lineWidth = w; c.stroke(); }
+  // Sample a quadratic curve into n+1 points.
+  function ssQuad(x0, y0, cx, cy, x1, y1, n = 10) {
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n, u = 1 - t;
+      pts.push([u * u * x0 + 2 * u * t * cx + t * t * x1, u * u * y0 + 2 * u * t * cy + t * t * y1]);
+    }
+    return pts;
+  }
+  // Inked ribbon along a centre-line; wfn(t) gives the full width at 0…1.
+  function ssRibbon(c, h, pts, wfn, fill, inkW = 1.3) {
+    const n = pts.length, L = [], R = [];
+    for (let i = 0; i < n; i++) {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+      const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy) || 1, w = wfn(i / (n - 1)) / 2;
+      L.push([pts[i][0] - dy / len * w, pts[i][1] + dx / len * w]); R.push([pts[i][0] + dy / len * w, pts[i][1] - dx / len * w]);
+    }
+    c.beginPath(); ssLine(c, L); for (let i = n - 1; i >= 0; i--) c.lineTo(R[i][0], R[i][1]); c.closePath();
+    h.fillInk(fill, inkW);
+  }
+  // Soft cluster of drifting smoke puffs (spans about ±1.2·rad).
+  function ssSmoke(c, x, y, rad, ts, seed, color, alpha = 0.6, n = 6) {
+    if (!(rad > 0)) return;
+    c.save();
+    for (let i = 0; i < n; i++) {
+      const a = seed * 1.7 + i * TAU / n + (ts ? ts / 2200 : 0) * (i % 2 ? 1 : -1);
+      const d = rad * (0.3 + 0.28 * heroHash(seed + i * 3.1));
+      const pr = rad * (0.4 + 0.18 * heroHash(seed * 2.3 + i)) * (ts ? 0.92 + 0.08 * Math.sin(ts / 500 + i + seed) : 1);
+      const px = x + Math.cos(a) * d, py = y + Math.sin(a) * d * 0.8;
+      const g = c.createRadialGradient(px, py, 0, px, py, pr);
+      g.addColorStop(0, rgba(color, alpha)); g.addColorStop(0.6, rgba(color, alpha * 0.55)); g.addColorStop(1, rgba(color, 0));
+      c.fillStyle = g; c.beginPath(); c.arc(px, py, pr, 0, TAU); c.fill();
+    }
+    c.restore();
+  }
+  // Glowing speed arc (radius R, angles a0 → a1).
+  function ssSpeedArc(c, x, y, R, a0, a1, w, color, alpha) {
+    if (!(R > 0) || !(alpha > 0.01)) return;
+    if (a1 < a0) { const t = a0; a0 = a1; a1 = t; }
+    c.save(); c.globalCompositeOperation = "lighter"; c.lineCap = "round";
+    c.beginPath(); c.arc(x, y, R, a0, a1);
+    c.strokeStyle = rgba(color, alpha * 0.3); c.lineWidth = w * 2.2; c.stroke();
+    c.strokeStyle = rgba(color, alpha); c.lineWidth = w; c.stroke();
+    c.strokeStyle = rgba("#ffffff", alpha * 0.6); c.lineWidth = Math.max(0.5, w * 0.35); c.stroke();
+    c.restore();
+  }
+  // Narrow, menacing glowing eyes.
+  function ssEyes(c, x, y, dx, s, color, p) {
+    c.save(); c.globalCompositeOperation = "lighter";
+    for (const sx of [-1, 1]) {
+      const ex = x + sx * dx, g = c.createRadialGradient(ex, y, 0, ex, y, s * 3);
+      g.addColorStop(0, "rgba(255,255,255,0.85)"); g.addColorStop(0.3, rgba(color, 0.6 * (0.6 + 0.4 * p))); g.addColorStop(1, rgba(color, 0));
+      c.fillStyle = g; c.beginPath(); c.arc(ex, y, s * 3, 0, TAU); c.fill();
+    }
+    c.restore();
+    for (const sx of [-1, 1]) {
+      c.beginPath(); c.ellipse(x + sx * dx, y, s * 1.3, s * 0.5, -sx * 0.18, 0, TAU); c.fillStyle = color; c.fill();
+      c.beginPath(); c.ellipse(x + sx * dx, y, s * 0.7, s * 0.25, -sx * 0.18, 0, TAU); c.fillStyle = "#ffffff"; c.fill();
+    }
+  }
+  // Masked ninja head: hood, eye slit with glowing eyes, hachigane headband with fluttering tails.
+  function ssHead(c, h, pal, ts, x, y, s, o = {}) {
+    const p = h.pulse(420, x * 0.05 + y * 0.03), dir = o.dir || -1;
+    if (o.tails !== false) {
+      for (let k = 0; k < 2; k++) {
+        const pts = [];
+        for (let i = 0; i <= 6; i++) {
+          const t = i / 6, wv = (ts ? Math.sin(ts / 230 - t * 5 + k * 1.3) : 0.6) * s * 0.3 * t;
+          pts.push([x + dir * (s * 0.75 + t * s * (1.5 - k * 0.35)), y - s * 0.5 + t * s * (0.3 + k * 0.45) + wv]);
+        }
+        ssRibbon(c, h, pts, (t) => s * (0.3 - 0.14 * t), o.band || pal.mid, 1);
+      }
+    }
+    c.beginPath(); c.arc(x, y, s, 0, TAU); h.fillInk(nbCloth(c, x - s, y - s, x + s, y + s, o.hood || SS_GARB), 1.6);
+    h.rr(x - s * 0.74, y - s * 0.2, s * 1.48, s * 0.36, s * 0.16);
+    c.fillStyle = o.shadowFace ? "#07040c" : nbCloth(c, x, y - s * 0.2, x, y + s * 0.16, SS_SKIN); c.fill();
+    c.strokeStyle = h.INK; c.lineWidth = 1; c.stroke();
+    ssEyes(c, x + (o.look || 0) * s, y - s * 0.02, s * 0.3, s * 0.1, o.eyes || pal.bright, p);
+    if (o.band !== false) {
+      c.beginPath(); c.moveTo(x - s * 0.96, y - s * 0.36); c.quadraticCurveTo(x, y - s * 0.66, x + s * 0.96, y - s * 0.36);
+      ssInkStroke(c, h, s * 0.24, o.band || pal.mid);
+      h.rr(x - s * 0.3, y - s * 0.68, s * 0.6, s * 0.28, s * 0.06); h.fillInk(h.metal(x - s * 0.3, y - s * 0.68, x + s * 0.3, y - s * 0.4, ...SS_STEEL), 1);
+      c.beginPath(); c.arc(x, y - s * 0.54, s * 0.08, 0, TAU); c.moveTo(x - s * 0.17, y - s * 0.46); c.lineTo(x + s * 0.17, y - s * 0.62);
+      c.strokeStyle = h.INK; c.lineWidth = Math.max(0.6, s * 0.05); c.stroke();
+    }
+    c.beginPath(); c.moveTo(x - s * 0.5, y + s * 0.42); c.quadraticCurveTo(x, y + s * 0.58, x + s * 0.5, y + s * 0.42);
+    c.strokeStyle = "rgba(0,0,0,0.5)"; c.lineWidth = Math.max(0.6, s * 0.06); c.stroke();
+  }
+  // Straight ninjato: grip behind (x, y), blade along ang; w = blade width px.
+  function ssBlade(c, h, pal, x, y, ang, blade, hilt, w, o = {}) {
+    const glow = o.glow || pal.bright, ga = o.glowA == null ? 1 : o.glowA;
+    c.save(); c.translate(x, y); c.rotate(ang);
+    h.rr(-hilt, -w * 0.45, hilt, w * 0.9, w * 0.25); h.fillInk(o.wrap || "#16121d", 1.1);
+    c.beginPath();
+    for (let k = 1; k < 5; k++) {
+      const gx = -hilt + k * hilt / 5;
+      c.moveTo(gx - w * 0.2, -w * 0.38); c.lineTo(gx + w * 0.2, w * 0.38); c.moveTo(gx + w * 0.2, -w * 0.38); c.lineTo(gx - w * 0.2, w * 0.38);
+    }
+    c.strokeStyle = rgba(pal.mid, 0.95); c.lineWidth = Math.max(0.6, w * 0.16); c.stroke();
+    c.beginPath(); c.arc(-hilt, 0, w * 0.48, 0, TAU); h.fillInk(pal.bright, 1);
+    h.rr(-w * 0.18, -w * 0.95, w * 0.36, w * 1.9, w * 0.08); h.fillInk(nbCloth(c, 0, -w, 0, w, SS_IRON), 1.1);
+    c.beginPath(); c.moveTo(w * 0.18, -w * 0.4); c.lineTo(blade - w * 1.4, -w * 0.4); c.lineTo(blade, w * 0.4); c.lineTo(w * 0.18, w * 0.4); c.closePath();
+    h.fillInk(h.metal(0, -w * 0.4, 0, w * 0.4, ...SS_STEEL), 1.1);
+    c.save(); c.globalCompositeOperation = "lighter";
+    c.beginPath(); c.moveTo(w * 0.3, w * 0.3); c.lineTo(blade - w * 0.2, w * 0.32);
+    c.strokeStyle = rgba(glow, 0.32 * ga); c.lineWidth = w * 0.9; c.stroke();
+    c.strokeStyle = rgba(glow, 0.9 * ga); c.lineWidth = Math.max(0.6, w * 0.22); c.stroke();
+    c.restore();
+    c.restore();
+  }
+  // Kunai centred on (x, y) pointing along ang; total length len (ring at the back).
+  function ssKunai(c, h, pal, x, y, ang, len, o = {}) {
+    const w = len * 0.16;
+    c.save(); c.translate(x, y); c.rotate(ang);
+    if (o.alpha != null) c.globalAlpha = o.alpha;
+    c.beginPath(); c.arc(-len * 0.42, 0, w * 0.55, 0, TAU); ssInkStroke(c, h, Math.max(0.6, w * 0.32), SS_IRON[0]);
+    h.rr(-len * 0.37, -w * 0.3, len * 0.35, w * 0.6, w * 0.2); h.fillInk(o.wrap || pal.deep, 1);
+    c.beginPath();
+    for (let k = 1; k < 4; k++) { const gx = -len * 0.37 + k * len * 0.0875; c.moveTo(gx, -w * 0.3); c.lineTo(gx + w * 0.25, w * 0.3); }
+    c.strokeStyle = rgba(pal.bright, 0.9); c.lineWidth = Math.max(0.5, w * 0.14); c.stroke();
+    c.beginPath(); c.moveTo(-len * 0.03, 0); c.quadraticCurveTo(len * 0.12, -w * 0.95, len * 0.58, 0); c.quadraticCurveTo(len * 0.12, w * 0.95, -len * 0.03, 0); c.closePath();
+    h.fillInk(h.metal(0, -w, 0, w, ...SS_STEEL), 1);
+    c.beginPath(); c.moveTo(0, 0); c.lineTo(len * 0.5, 0); c.strokeStyle = rgba(SS_STEEL[2], 0.7); c.lineWidth = Math.max(0.5, w * 0.1); c.stroke();
+    c.restore();
+  }
+  // Four-bladed folding Fuuma shuriken (windmill star) of radius R; o.ghost draws a shadow-clone copy.
+  function ssFuuma(c, h, pal, x, y, R, rot, o = {}) {
+    if (!(R > 0)) return;
+    const ghost = !!o.ghost, P = (rad, a) => [Math.cos(a) * rad, Math.sin(a) * rad];
+    c.save(); c.translate(x, y); c.rotate(rot);
+    if (ghost) c.globalAlpha = o.alpha == null ? 0.5 : o.alpha;
+    for (let k = 0; k < 4; k++) {
+      const a = k * TAU / 4;
+      const b0 = P(R * 0.24, a - 0.55), c1 = P(R * 0.8, a - 0.3), tip = P(R, a + 0.1), c2 = P(R * 0.5, a + 0.16), b1 = P(R * 0.24, a + 0.62);
+      c.beginPath(); c.moveTo(b0[0], b0[1]); c.quadraticCurveTo(c1[0], c1[1], tip[0], tip[1]); c.quadraticCurveTo(c2[0], c2[1], b1[0], b1[1]); c.closePath();
+      h.fillInk(ghost ? nbCloth(c, -R, -R, R, R, SS_SHADE) : h.metal(-R, -R, R, R, ...SS_STEEL), 1.3);
+      if (!ghost) {
+        const g0 = P(R * 0.34, a - 0.12), g1 = P(R * 0.74, a - 0.04);
+        c.beginPath(); c.moveTo(g0[0], g0[1]); c.lineTo(g1[0], g1[1]); c.strokeStyle = rgba(SS_STEEL[2], 0.75); c.lineWidth = Math.max(0.6, R * 0.035); c.stroke();
+      }
+      c.save(); c.globalCompositeOperation = "lighter";
+      c.beginPath(); c.moveTo(b0[0], b0[1]); c.quadraticCurveTo(c1[0], c1[1], tip[0], tip[1]);
+      c.strokeStyle = rgba(pal.bright, ghost ? 0.6 : 0.85); c.lineWidth = Math.max(0.8, R * 0.05); c.stroke();
+      c.restore();
+    }
+    c.beginPath(); c.arc(0, 0, R * 0.3, 0, TAU); h.fillInk(ghost ? SS_SHADE[1] : nbCloth(c, -R * 0.3, -R * 0.3, R * 0.3, R * 0.3, SS_IRON), 1.3);
+    c.beginPath(); c.arc(0, 0, R * 0.21, 0, TAU); c.strokeStyle = ghost ? rgba(pal.bright, 0.8) : pal.mid; c.lineWidth = Math.max(0.8, R * 0.06); c.stroke();
+    for (let k = 0; k < 4; k++) { const [px, py] = P(R * 0.21, k * TAU / 4 + Math.PI / 4); c.beginPath(); c.arc(px, py, Math.max(0.5, R * 0.025), 0, TAU); c.fillStyle = pal.gold; c.fill(); }
+    c.beginPath(); c.arc(0, 0, R * 0.1, 0, TAU); c.fillStyle = "#05030a"; c.fill();
+    c.restore();
+  }
+  // Paper talisman (ofuda) hanging from (x, y), w × hh px, rotated by ang.
+  function ssTag(c, h, pal, x, y, w, hh, ang, o = {}) {
+    c.save(); c.translate(x, y); c.rotate(ang);
+    c.beginPath(); c.rect(-w / 2, 0, w, hh); h.fillInk(SS_PAPER, 1);
+    c.beginPath(); c.rect(-w * 0.36, hh * 0.06, w * 0.72, hh * 0.88); c.strokeStyle = rgba(o.border || SS_SEAL, 0.9); c.lineWidth = Math.max(0.5, w * 0.08); c.stroke();
+    c.beginPath(); c.moveTo(0, hh * 0.14); c.lineTo(0, hh * 0.86);
+    c.moveTo(-w * 0.2, hh * 0.3); c.lineTo(w * 0.2, hh * 0.26); c.moveTo(-w * 0.18, hh * 0.52); c.lineTo(w * 0.18, hh * 0.56); c.moveTo(-w * 0.14, hh * 0.72); c.lineTo(w * 0.16, hh * 0.7);
+    c.strokeStyle = o.ink || "#1a0d10"; c.lineWidth = Math.max(0.6, w * 0.1); c.stroke();
+    c.beginPath(); c.arc(0, hh * 0.41, w * 0.13, 0, TAU); c.fillStyle = o.dot || pal.bright; c.fill();
+    c.restore();
+  }
+  // Glowing iron chain along a polyline (link size s px).
+  function ssChain(c, h, pts, s, glow, gAlpha = 1) {
+    if (pts.length < 2 || !(s > 0)) return;
+    c.save(); c.globalCompositeOperation = "lighter";
+    c.beginPath(); ssLine(c, pts); c.strokeStyle = rgba(glow, 0.28 * gAlpha); c.lineWidth = s * 2.6; c.stroke();
+    c.strokeStyle = rgba(glow, 0.55 * gAlpha); c.lineWidth = s * 1.1; c.stroke();
+    c.restore();
+    let k = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], len = Math.hypot(x1 - x0, y1 - y0);
+      const n = Math.max(1, Math.round(len / (s * 1.2))), a = Math.atan2(y1 - y0, x1 - x0);
+      for (let j = 0; j < n; j++, k++) {
+        const t = (j + 0.5) / n;
+        c.beginPath(); c.ellipse(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, s * 0.7, k % 2 ? s * 0.16 : s * 0.4, a, 0, TAU);
+        c.strokeStyle = h.INK; c.lineWidth = s * 0.3 + 1.1; c.stroke();
+        c.strokeStyle = k % 2 ? SS_STEEL[1] : SS_STEEL[0]; c.lineWidth = s * 0.3; c.stroke();
+      }
+    }
+  }
+  // Translucent rising shadow-clone silhouette (base centre (x, y), height ≈ 2.4·s).
+  function ssClone(c, pal, x, y, s, alpha) {
+    if (!(alpha > 0.01) || !(s > 0)) return;
+    c.save(); c.globalAlpha = Math.min(1, alpha);
+    const g = c.createLinearGradient(x, y - s * 1.25, x, y + s * 0.9);
+    g.addColorStop(0, "rgba(44,36,64,0.95)"); g.addColorStop(0.55, "rgba(16,11,26,0.9)"); g.addColorStop(1, "rgba(2,1,4,0)");
+    const body = () => {
+      c.beginPath(); c.moveTo(x - s * 0.3, y - s * 0.66);
+      c.quadraticCurveTo(x - s * 0.62, y - s * 0.1, x - s * 0.48, y + s * 0.9); c.lineTo(x + s * 0.48, y + s * 0.9);
+      c.quadraticCurveTo(x + s * 0.62, y - s * 0.1, x + s * 0.3, y - s * 0.66); c.closePath();
+    };
+    body(); c.fillStyle = g; c.fill();
+    c.beginPath(); c.arc(x, y - s * 0.95, s * 0.28, 0, TAU); c.fill();
+    c.strokeStyle = rgba(pal.bright, 0.75); c.lineWidth = Math.max(0.8, s * 0.05); c.stroke();
+    body(); c.stroke();
+    c.globalCompositeOperation = "lighter"; c.fillStyle = rgba(pal.bright, 0.95);
+    for (const sx of [-1, 1]) { c.beginPath(); c.ellipse(x + sx * s * 0.1, y - s * 0.95, s * 0.07, s * 0.028, -sx * 0.2, 0, TAU); c.fill(); }
+    c.restore();
+  }
+  // Half of a glowing umbral sigil ring (front: lower half, else upper half) with orbiting rune ticks.
+  function ssUmbralRing(c, pal, cx, cy, rx, ry, ts, front, p) {
+    const a0 = front ? 0 : Math.PI, rot = ts ? ts / 2600 : 0;
+    c.save(); c.globalCompositeOperation = "lighter";
+    for (const [k, al, w] of [[1, 0.25, ry * 0.45], [1, 0.85, ry * 0.12], [0.8, 0.55, ry * 0.08]]) {
+      c.beginPath();
+      for (let i = 0; i <= 24; i++) { const a = a0 + i * Math.PI / 24, x = cx + Math.cos(a) * rx * k, y = cy + Math.sin(a) * ry * k; if (i) c.lineTo(x, y); else c.moveTo(x, y); }
+      c.strokeStyle = rgba(pal.bright, al * (0.6 + 0.4 * p)); c.lineWidth = Math.max(0.8, w); c.stroke();
+    }
+    c.beginPath();
+    for (let i = 0; i < 18; i++) {
+      const a = rot + i * TAU / 18;
+      if ((Math.sin(a + 0.05) >= 0) !== front) continue;
+      c.moveTo(cx + Math.cos(a) * rx * 0.9, cy + Math.sin(a) * ry * 0.9); c.lineTo(cx + Math.cos(a + 0.1) * rx * 0.9, cy + Math.sin(a + 0.1) * ry * 0.9);
+    }
+    c.strokeStyle = rgba(pal.rim, 0.9); c.lineWidth = Math.max(0.8, ry * 0.12); c.stroke();
+    c.restore();
+  }
+  // Spinning circular sawblade with n teeth.
+  function ssSaw(c, h, pal, x, y, R, rot, n = 14) {
+    if (!(R > 0)) return;
+    c.save(); c.translate(x, y); c.rotate(rot);
+    c.save(); c.globalCompositeOperation = "lighter";
+    c.beginPath(); c.arc(0, 0, R * 0.92, 0, TAU); c.strokeStyle = rgba(pal.bright, 0.35); c.lineWidth = Math.max(1, R * 0.18); c.stroke();
+    c.restore();
+    c.beginPath();
+    for (let i = 0; i < n; i++) {
+      const a0 = i * TAU / n, a1 = a0 + TAU / n * 0.7;
+      if (i) c.lineTo(Math.cos(a0) * R * 0.78, Math.sin(a0) * R * 0.78); else c.moveTo(Math.cos(a0) * R * 0.78, Math.sin(a0) * R * 0.78);
+      c.lineTo(Math.cos(a1) * R, Math.sin(a1) * R);
+    }
+    c.closePath(); h.fillInk(h.metal(-R, -R, R, R, ...SS_STEEL), 1.1);
+    c.beginPath(); c.arc(0, 0, R * 0.56, 0, TAU); c.strokeStyle = rgba(SS_STEEL[2], 0.6); c.lineWidth = Math.max(0.5, R * 0.05); c.stroke();
+    c.beginPath(); c.arc(0, 0, R * 0.24, 0, TAU); h.fillInk(pal.mid, 1);
+    for (let k = 0; k < 3; k++) { const a = k * TAU / 3; c.beginPath(); c.arc(Math.cos(a) * R * 0.4, Math.sin(a) * R * 0.4, R * 0.07, 0, TAU); c.fillStyle = "#08060c"; c.fill(); }
+    c.restore();
+  }
+
+  SG.THEMES.shadowshinobi = {
+    id: "shadowshinobi",
+    name: { en: "Shadow Shinobi", fr: "Shinobi de l'Ombre", zh: "暗影忍道", ar: "شينوبي الظلال" },
+    description: {
+      en: "Masters of umbral stealth: the Shadow Grandmaster weaving shadow clones, the kusarigama reaper whirling flying chain sickles, the iron-walled shinobi fortress, the smoke phantom vanishing into substitution logs, the shadow beast scout, the Fuuma shuriken striker, the umbral dart sniper, and the karakuri puppet assassin.",
+      fr: "Maîtres de la furtivité ténébreuse : le Grand-Maître de l'Ombre tissant des clones d'ombre, le faucheur au kusarigama maniant des chaînes volantes, la forteresse shinobi au mur de fer, le fantôme de fumée se substituant en rondin, l'éclaireur à la bête d'ombre, le lanceur de shuriken Fuuma, le tireur d'élite aux dards d'ombre et l'assassin aux marionnettes karakuri.",
+      zh: "暗影潜行的宗师们：编织影分身的影之宗师、挥舞锁链的锁镰死神、身披重甲的铁壁忍者、遁入烟雾只留替身木的幽灵幻影、驾驭影兽的机动斥候、掷出巨型风魔手里剑的强袭忍者、隐蔽狙击的暗夜刺客，以及机巧提线傀儡暗杀人偶。",
+      ar: "أسياد التخفي في العتمة: المعلّم الأكبر للظلال ناسج نسخ الظل، وحاصد الكوساريغاما الملوّح بالمناجل ذات السلاسل الطائرة، وحصن الشينوبي الجداري الحديدي، وطيف الدخان المتلاشي خلف جذوع التبديل، وكشّاف وحش الظلال، وضارب شوريكين فوما، وقنّاص سهام الظل، والدمية الخشبية كاراكوري القاتلة بخيوط الظلال.",
+    },
+    painters: {
+      /* Shadow Grandmaster, Kage of the Umbral Veil — obsidian garb under a lacquered kasa hat whose shadowed cowl
+         hides all but two glowing eyes; a long side-coloured scarf trails behind, twin drawn ninjato cross at his
+         back with glowing edges, his gloved hands weave the umbral seal inside a swirling dark vortex, and shadow
+         clones rise and fade from the glowing umbral sigil circle at his feet. */
+      sovereign(c, pal, r, ts, h) {
+        const { fillInk } = h;
+        const p = h.pulse(360, 0.2), sway = ts ? Math.sin(ts / 760) * r * 0.025 : 0, bob = ts ? Math.sin(ts / 980) * r * 0.012 : 0;
+        const CY = r * 0.96, CRX = r * 0.98, CRY = r * 0.2;
+        // umbral sigil circle (dark disc + back half of the ring)
+        c.save(); c.translate(0, CY); c.scale(1, CRY / CRX);
+        const disc = c.createRadialGradient(0, 0, 0, 0, 0, CRX);
+        disc.addColorStop(0, "rgba(2,1,6,0.95)"); disc.addColorStop(0.7, rgba(pal.deep, 0.75)); disc.addColorStop(1, rgba(pal.deep, 0));
+        c.fillStyle = disc; c.beginPath(); c.arc(0, 0, CRX, 0, TAU); c.fill();
+        c.restore();
+        ssUmbralRing(c, pal, 0, CY, CRX * 0.92, CRY * 0.92, ts, false, p);
+        // rising shadow clones
+        for (let k = 0; k < 2; k++) {
+          const sx = k ? 1 : -1, ph = ts ? (ts / 3200 + k * 0.5) % 1 : 0.5;
+          ssClone(c, pal, sx * r * 0.68, r * 0.55 - ph * r * 0.3, r * 0.42, 0.8 * Math.sin(Math.PI * ph));
+        }
+        // trailing scarf (tail behind the body)
+        const scarf = [];
+        for (let i = 0; i <= 9; i++) {
+          const t = i / 9, wv = (ts ? Math.sin(ts / 260 - t * 5.5) : Math.sin(1 - t * 5.5)) * r * 0.08 * t;
+          scarf.push([r * 0.12 + t * r * 0.96, -r * 0.46 + bob + t * r * (-0.12 + 0.5 * t) + wv]);
+        }
+        ssRibbon(c, h, scarf, (t) => r * (0.17 - 0.08 * t), ssSide(c, pal, r * 0.1, -r * 0.5, r * 1.1, 0), 1.4);
+        c.beginPath(); ssLine(c, scarf.slice(1)); c.strokeStyle = rgba(pal.rim, 0.55); c.lineWidth = Math.max(0.6, r * 0.015); c.stroke();
+        // twin ninjato crossed at his back
+        for (const sx of [-1, 1]) {
+          const gx = sx * r * 0.3, gy = -r * 0.6 + bob, tx = -sx * r * 0.92, ty = r * 0.42;
+          ssBlade(c, h, pal, gx, gy, Math.atan2(ty - gy, tx - gx), Math.hypot(tx - gx, ty - gy), r * 0.28, r * 0.06, { glowA: 0.6 + 0.4 * p });
+        }
+        // hakama legs, wrapped shins and tabi
+        const garb = nbCloth(c, -r * 0.5, -r * 0.45, r * 0.5, r * 0.95, SS_GARB);
+        c.beginPath(); c.moveTo(-r * 0.3, r * 0.1); c.lineTo(-r * 0.5, r * 0.86); c.lineTo(-r * 0.12, r * 0.88); c.lineTo(0, r * 0.42);
+        c.lineTo(r * 0.12, r * 0.88); c.lineTo(r * 0.5, r * 0.86); c.lineTo(r * 0.3, r * 0.1); c.closePath(); fillInk(garb, 2);
+        for (const sx of [-1, 1]) {
+          c.beginPath();
+          for (let k = 0; k < 3; k++) { const y = r * (0.62 + k * 0.08); c.moveTo(sx * r * 0.16, y); c.lineTo(sx * r * 0.45, y + r * 0.04); }
+          c.strokeStyle = rgba(pal.mid, 0.9); c.lineWidth = Math.max(0.8, r * 0.025); c.stroke();
+          c.beginPath(); c.ellipse(sx * r * 0.32, r * 0.92, r * 0.17, r * 0.06, 0, 0, TAU); fillInk("#0d0a12", 1.4);
+        }
+        // long open coat with side-coloured hem
+        c.beginPath(); c.moveTo(-r * 0.36, -r * 0.42 + bob); c.quadraticCurveTo(-r * 0.52, 0, -r * 0.5 + sway, r * 0.62); c.lineTo(-r * 0.1 + sway, r * 0.56);
+        c.lineTo(0, r * 0.3); c.lineTo(r * 0.1 + sway, r * 0.56); c.lineTo(r * 0.5 + sway, r * 0.62); c.quadraticCurveTo(r * 0.52, 0, r * 0.36, -r * 0.42 + bob); c.closePath();
+        fillInk(garb, 2.2);
+        c.beginPath(); c.moveTo(-r * 0.5 + sway, r * 0.6); c.lineTo(-r * 0.1 + sway, r * 0.54); c.moveTo(r * 0.1 + sway, r * 0.54); c.lineTo(r * 0.5 + sway, r * 0.6);
+        c.strokeStyle = pal.bright; c.lineWidth = Math.max(1, r * 0.035); c.stroke();
+        c.beginPath(); c.moveTo(-r * 0.2, -r * 0.42 + bob); c.lineTo(0, -r * 0.08); c.lineTo(r * 0.2, -r * 0.42 + bob);
+        ssInkStroke(c, h, r * 0.05, pal.mid);
+        // obi with a knotted side-coloured sash
+        h.rr(-r * 0.36, r * 0.06, r * 0.72, r * 0.13, r * 0.03); fillInk(ssSide(c, pal, 0, r * 0.06, 0, r * 0.19), 1.6);
+        for (const [dx, len] of [[0.05, 0.3], [0.14, 0.24]]) {
+          const pts = ssQuad(r * 0.2, r * 0.13, r * (0.24 + dx) + sway, r * 0.3, r * (0.2 + dx) + sway * 1.5, r * (0.13 + len), 6);
+          ssRibbon(c, h, pts, (t) => r * (0.07 - 0.02 * t), pal.mid, 1);
+        }
+        c.beginPath(); c.arc(r * 0.2, r * 0.125, r * 0.05, 0, TAU); fillInk(pal.bright, 1.2);
+        // iron shoulder guards
+        for (const sx of [-1, 1]) { c.beginPath(); c.ellipse(sx * r * 0.38, -r * 0.36 + bob, r * 0.13, r * 0.08, sx * 0.4, 0, TAU); fillInk(nbCloth(c, 0, -r * 0.44, 0, -r * 0.28, SS_IRON), 1.4); }
+        // umbral vortex behind the seal
+        const SX = 0, SY = -r * 0.26 + bob;
+        wkGlow(c, SX, SY, r * 0.34, pal.bright, 0.45 + 0.35 * p);
+        c.save(); c.globalCompositeOperation = "lighter";
+        for (let k = 0; k < 3; k++) {
+          const a = (ts ? ts / 420 : 0) + k * TAU / 3;
+          c.beginPath(); c.arc(SX, SY, r * (0.2 + 0.03 * k), a, a + 1.4);
+          c.strokeStyle = rgba(k % 2 ? SS_UMBRA : pal.bright, 0.7); c.lineWidth = Math.max(0.8, r * 0.025); c.stroke();
+        }
+        c.restore();
+        // arms bent inward to the seal
+        for (const sx of [-1, 1]) {
+          heroLimb(c, h, sx * r * 0.36, -r * 0.34 + bob, sx * r * 0.58, -r * 0.12, sx * r * 0.12, -r * 0.2 + bob, r * 0.15, garb);
+          c.beginPath(); c.moveTo(sx * r * 0.2, -r * 0.27 + bob); c.lineTo(sx * r * 0.22, -r * 0.13 + bob); ssInkStroke(c, h, r * 0.045, pal.bright);
+        }
+        // the hand seal: clasped fists, index and middle fingers raised
+        const glove = nbCloth(c, -r * 0.1, SY - r * 0.1, r * 0.1, SY + r * 0.1, SS_GARB_LIGHT);
+        h.rr(-r * 0.11, SY - r * 0.02, r * 0.22, r * 0.13, r * 0.05); fillInk(glove, 1.3);
+        h.rr(-r * 0.045, SY - r * 0.16, r * 0.09, r * 0.16, r * 0.03); fillInk(glove, 1.2);
+        c.beginPath(); c.moveTo(0, SY - r * 0.16); c.lineTo(0, SY); c.strokeStyle = h.INK; c.lineWidth = 0.8; c.stroke();
+        wkGlow(c, 0, SY - r * 0.16, r * 0.08, pal.bright, 0.7 + 0.3 * p);
+        // neck wrap of the scarf
+        h.rr(-r * 0.2, -r * 0.52 + bob, r * 0.4, r * 0.12, r * 0.05); fillInk(ssSide(c, pal, 0, -r * 0.52, 0, -r * 0.4), 1.4);
+        // shadow cowl with glowing eyes under a lacquered kasa
+        ssHead(c, h, pal, ts, 0, -r * 0.66 + bob, r * 0.19, { band: false, tails: false, shadowFace: true });
+        const KY = -r * 0.82 + bob;
+        c.beginPath(); c.moveTo(-r * 0.6, KY + r * 0.1); c.quadraticCurveTo(-r * 0.3, KY - r * 0.08, 0, KY - r * 0.28);
+        c.quadraticCurveTo(r * 0.3, KY - r * 0.08, r * 0.6, KY + r * 0.1); c.quadraticCurveTo(0, KY + r * 0.02, -r * 0.6, KY + r * 0.1); c.closePath();
+        fillInk(nbCloth(c, 0, KY - r * 0.28, 0, KY + r * 0.1, ["#4a4058", "#1d1828", "#08060c"]), 1.8);
+        c.beginPath();
+        for (let k = -3; k <= 3; k++) { if (!k) continue; c.moveTo(0, KY - r * 0.26); c.lineTo(k * r * 0.17, KY + r * 0.06 - Math.abs(k) * r * 0.005); }
+        c.strokeStyle = "rgba(255,255,255,0.12)"; c.lineWidth = Math.max(0.5, r * 0.012); c.stroke();
+        c.beginPath(); c.moveTo(-r * 0.58, KY + r * 0.09); c.quadraticCurveTo(0, KY + r * 0.01, r * 0.58, KY + r * 0.09);
+        c.strokeStyle = pal.bright; c.lineWidth = Math.max(1, r * 0.03); c.stroke();
+        c.beginPath(); c.arc(0, KY - r * 0.27, r * 0.035, 0, TAU); fillInk(pal.gold, 1);
+        // front half of the sigil ring and rising umbral motes
+        ssUmbralRing(c, pal, 0, CY, CRX * 0.92, CRY * 0.92, ts, true, p);
+        for (let i = 0; i < 9; i++) {
+          const ph = ts ? (ts / 2400 + heroHash(i + 0.5)) % 1 : heroHash(i + 0.5);
+          const x = r * (-0.85 + 1.7 * heroHash(i * 2.7 + 1)) + Math.sin(ph * 6 + i) * r * 0.04, y = CY - ph * r * 0.9;
+          c.beginPath(); c.arc(x, y, Math.max(0.6, r * 0.022), 0, TAU); c.fillStyle = rgba(i % 3 ? pal.bright : SS_UMBRA, 0.85 * Math.sin(Math.PI * ph)); c.fill();
+        }
+      },
+      /* Kusarigama Reaper, the Chain-Sickle Assassin — in a low stalking crouch, one fist whirls the glowing chain
+         overhead so the flying iron weight orbits through speed arcs, while the other hand levels the curved steel
+         sickle; the chain loops down from the sickle's butt shedding side-coloured sparks, and shadow smoke swirls
+         around his feet. */
+      reaper(c, pal, r, ts, h) {
+        const { fillInk } = h;
+        const p = h.pulse(240, 1.3), bob = ts ? Math.sin(ts / 520) * r * 0.015 : 0;
+        const spin = ts ? ts / 210 : 0.9, HX = r * 0.12, HY = -r * 0.66 + bob, ORX = r * 0.6, ORY = r * 0.3;
+        const W = [HX + Math.cos(spin) * ORX, HY + Math.sin(spin) * ORY], wFront = Math.sin(spin) > 0;
+        const garb = nbCloth(c, -r * 0.5, -r * 0.4, r * 0.5, r * 0.9, SS_GARB);
+        // swirling shadow smoke
+        ssSmoke(c, -r * 0.55, r * 0.72, r * 0.3, ts, 2, "#160f22", 0.75);
+        ssSmoke(c, r * 0.5, r * 0.8, r * 0.24, ts, 5, "#160f22", 0.7);
+        c.save(); c.globalCompositeOperation = "lighter";
+        for (let k = 0; k < 3; k++) {
+          const a = (ts ? -ts / 900 : 0) + k * TAU / 3;
+          c.beginPath();
+          for (let i = 0; i <= 14; i++) { const b = a + i * 0.12, x = Math.cos(b) * r * (0.8 - i * 0.012), y = r * 0.6 + Math.sin(b) * r * 0.26; if (i) c.lineTo(x, y); else c.moveTo(x, y); }
+          c.strokeStyle = rgba(k % 2 ? SS_UMBRA : pal.deep, 0.5); c.lineWidth = Math.max(1, r * 0.05); c.stroke();
+        }
+        c.restore();
+        // whirling chain loop, trailing speed arcs and the flying iron weight (depth-sorted against the body)
+        const orbit = (front) => {
+          c.save(); c.globalCompositeOperation = "lighter";
+          c.beginPath();
+          for (let i = 0; i <= 24; i++) { const a = (front ? 0 : Math.PI) + i * Math.PI / 24, x = HX + Math.cos(a) * ORX, y = HY + Math.sin(a) * ORY; if (i) c.lineTo(x, y); else c.moveTo(x, y); }
+          c.strokeStyle = rgba(pal.bright, 0.22 + 0.15 * p); c.lineWidth = Math.max(1, r * 0.035); c.stroke();
+          for (let j = 0; j < 12; j++) {
+            const a = spin - 1.3 + j * 0.11;
+            if ((Math.sin(a + 0.055) > 0) !== front) continue;
+            c.beginPath(); c.moveTo(HX + Math.cos(a) * ORX, HY + Math.sin(a) * ORY); c.lineTo(HX + Math.cos(a + 0.11) * ORX, HY + Math.sin(a + 0.11) * ORY);
+            c.strokeStyle = rgba(pal.bright, 0.08 + 0.07 * j); c.lineWidth = Math.max(1, r * (0.03 + 0.006 * j)); c.stroke();
+            if (j % 3 === 0) {
+              c.beginPath(); c.moveTo(HX + Math.cos(a) * ORX * 1.12, HY + Math.sin(a) * ORY * 1.15); c.lineTo(HX + Math.cos(a + 0.2) * ORX * 1.12, HY + Math.sin(a + 0.2) * ORY * 1.15);
+              c.strokeStyle = rgba("#ffffff", 0.06 * j); c.lineWidth = Math.max(0.6, r * 0.012); c.stroke();
+            }
+          }
+          c.restore();
+          if (wFront !== front) return;
+          ssChain(c, h, [[HX, HY], W], r * 0.034, pal.bright, 0.8 + 0.2 * p);
+          wkGlow(c, W[0], W[1], r * 0.16, pal.bright, 0.5);
+          c.beginPath(); c.arc(W[0], W[1], r * 0.075, 0, TAU); fillInk(nbCloth(c, W[0] - r * 0.08, W[1] - r * 0.08, W[0] + r * 0.08, W[1] + r * 0.08, SS_IRON), 1.4);
+          c.beginPath(); c.arc(W[0], W[1], r * 0.045, 0, TAU); c.strokeStyle = pal.bright; c.lineWidth = Math.max(0.8, r * 0.018); c.stroke();
+        };
+        orbit(false);
+        // scarf trailing back
+        const scarf = [];
+        for (let i = 0; i <= 8; i++) {
+          const t = i / 8, wv = (ts ? Math.sin(ts / 220 - t * 5) : 0.5) * r * 0.07 * t;
+          scarf.push([-r * 0.05 - t * r * 0.95, -r * 0.2 + bob - t * r * 0.32 + wv]);
+        }
+        ssRibbon(c, h, scarf, (t) => r * (0.14 - 0.06 * t), ssSide(c, pal, 0, -r * 0.2, -r, -r * 0.5), 1.3);
+        // back leg kneeling, torso leaning forward, front leg in a deep lunge
+        heroLimb(c, h, -r * 0.2, r * 0.34, -r * 0.35, r * 0.55, -r * 0.42, r * 0.82, r * 0.17, garb);
+        heroLimb(c, h, -r * 0.42, r * 0.82, -r * 0.62, r * 0.86, -r * 0.82, r * 0.8, r * 0.13, garb);
+        c.beginPath(); c.ellipse(-r * 0.88, r * 0.76, r * 0.1, r * 0.05, -0.6, 0, TAU); fillInk("#0d0a12", 1.2);
+        c.beginPath(); c.moveTo(-r * 0.24, -r * 0.18 + bob); c.lineTo(r * 0.16, -r * 0.1 + bob); c.lineTo(r * 0.08, r * 0.4); c.lineTo(-r * 0.32, r * 0.38); c.closePath(); fillInk(garb, 2);
+        c.save(); c.beginPath(); c.moveTo(-r * 0.24, -r * 0.18 + bob); c.lineTo(r * 0.16, -r * 0.1 + bob); c.lineTo(r * 0.08, r * 0.4); c.lineTo(-r * 0.32, r * 0.38); c.closePath(); c.clip();
+        c.beginPath();
+        for (let k = -4; k <= 4; k++) { c.moveTo(k * r * 0.08 - r * 0.2, -r * 0.2); c.lineTo(k * r * 0.08 + r * 0.1, r * 0.1); c.moveTo(k * r * 0.08 + r * 0.1, -r * 0.2); c.lineTo(k * r * 0.08 - r * 0.2, r * 0.1); }
+        c.strokeStyle = "rgba(160,170,190,0.22)"; c.lineWidth = Math.max(0.5, r * 0.01); c.stroke();
+        c.restore();
+        c.beginPath(); c.moveTo(-r * 0.31, r * 0.27); c.lineTo(r * 0.1, r * 0.3); ssInkStroke(c, h, r * 0.07, pal.mid);
+        heroLimb(c, h, -r * 0.05, r * 0.34, r * 0.12, r * 0.26, r * 0.32, r * 0.4, r * 0.17, garb);
+        heroLimb(c, h, r * 0.32, r * 0.4, r * 0.38, r * 0.62, r * 0.36, r * 0.82, r * 0.13, garb);
+        c.beginPath();
+        for (let k = 0; k < 3; k++) { const y = r * (0.56 + k * 0.08); c.moveTo(r * 0.29, y); c.lineTo(r * 0.44, y + r * 0.03); }
+        c.strokeStyle = rgba(pal.bright, 0.9); c.lineWidth = Math.max(0.8, r * 0.022); c.stroke();
+        c.beginPath(); c.ellipse(r * 0.42, r * 0.87, r * 0.12, r * 0.05, 0, 0, TAU); fillInk("#0d0a12", 1.2);
+        // raised arm spinning the chain, head
+        heroLimb(c, h, -r * 0.1, -r * 0.14 + bob, -r * 0.2, -r * 0.5, HX, HY, r * 0.13, garb);
+        olHand(c, h, HX, HY, r * 0.06, SS_GARB_LIGHT);
+        ssHead(c, h, pal, ts, r * 0.06, -r * 0.32 + bob, r * 0.17, { look: 0.15 });
+        // front arm and the curved steel sickle
+        const KX = r * 0.52, KY = r * 0.16, ka = ts ? Math.sin(ts / 400) * 0.08 : 0, ca = Math.cos(ka), sa = Math.sin(ka);
+        const rot = (x, y) => [KX + (x - KX) * ca - (y - KY) * sa, KY + (x - KX) * sa + (y - KY) * ca];
+        c.save(); c.translate(KX, KY); c.rotate(ka); c.translate(-KX, -KY);
+        c.beginPath(); c.moveTo(r * 0.45, r * 0.44); c.lineTo(r * 0.6, -r * 0.12); ssInkStroke(c, h, r * 0.06, SS_WOOD[1]);
+        c.beginPath(); c.moveTo(r * 0.49, r * 0.3); c.lineTo(r * 0.55, r * 0.08); c.strokeStyle = pal.mid; c.lineWidth = Math.max(1, r * 0.04); c.stroke();
+        const BX = r * 0.6, BY = -r * 0.12;
+        c.beginPath(); c.moveTo(BX - r * 0.03, BY + r * 0.04); c.quadraticCurveTo(BX + r * 0.22, BY - r * 0.22, BX + r * 0.47, BY + r * 0.06);
+        c.quadraticCurveTo(BX + r * 0.22, BY - r * 0.06, BX + r * 0.02, BY + r * 0.08); c.closePath();
+        fillInk(h.metal(BX, BY - r * 0.2, BX + r * 0.4, BY + r * 0.1, ...SS_STEEL), 1.4);
+        c.save(); c.globalCompositeOperation = "lighter";
+        c.beginPath(); c.moveTo(BX + r * 0.04, BY + r * 0.06); c.quadraticCurveTo(BX + r * 0.22, BY - r * 0.06, BX + r * 0.45, BY + r * 0.06);
+        c.strokeStyle = rgba(pal.bright, 0.4 + 0.3 * p); c.lineWidth = Math.max(1, r * 0.05); c.stroke();
+        c.strokeStyle = "rgba(255,255,255,0.85)"; c.lineWidth = Math.max(0.6, r * 0.015); c.stroke();
+        c.restore();
+        c.restore();
+        heroLimb(c, h, r * 0.12, -r * 0.08 + bob, r * 0.42, -r * 0.04, KX, KY, r * 0.13, garb);
+        olHand(c, h, KX, KY, r * 0.06, SS_GARB_LIGHT);
+        // chain from the sickle's butt up to the spinning fist, with side-coloured sparks
+        const butt = rot(r * 0.45, r * 0.44), cx = ts ? Math.sin(ts / 600) * r * 0.08 : 0;
+        const chain = ssQuad(butt[0], butt[1], -r * 0.05 + cx, r * 0.62, HX, HY, 12);
+        ssChain(c, h, chain, r * 0.032, pal.bright, 0.7 + 0.3 * p);
+        for (let i = 0; i < 4; i++) {
+          const ph = ts ? (ts / 700 + i * 0.25) % 1 : i * 0.25 + 0.1, pt = chain[Math.min(chain.length - 1, Math.floor(ph * chain.length))];
+          wkSparkle(c, pt[0] + Math.cos(i * 2.1) * r * 0.05, pt[1] + Math.sin(i * 2.1) * r * 0.05, r * 0.06 * Math.sin(Math.PI * ph), pal.bright, ph * 3, 0.9);
+        }
+        orbit(true);
+      },
+      /* Iron Wall Shinobi, the Armored Behemoth — a wide, rooted defensive stance in iron-laced armour; a horned
+         iron kabuto with side-coloured fukigaeshi and a glowing crest over a fanged menpo mask; spiked iron tekko
+         gauntlets, one fist raised, the other gripping a massive riveted steel slab shield bearing a side-coloured
+         lacquer crest and fluttering explosive tags that crackle at the edges. */
+      juggernaut(c, pal, r, ts, h) {
+        const { fillInk } = h;
+        const p = h.pulse(420, 0.7), br = ts ? Math.sin(ts / 900) * r * 0.012 : 0;
+        const iron = nbCloth(c, -r * 0.6, -r * 0.6, r * 0.6, r * 0.9, SS_IRON);
+        const garb = nbCloth(c, -r * 0.5, -r * 0.4, r * 0.5, r * 0.9, SS_GARB);
+        const side = ssSide(c, pal, -r * 0.4, -r * 0.4, r * 0.4, r * 0.6);
+        c.beginPath(); c.ellipse(0, r * 0.97, r * 0.95, r * 0.11, 0, 0, TAU); c.fillStyle = "rgba(0,0,0,0.35)"; c.fill();
+        // wide stance: hakama legs, iron greaves, heavy feet
+        for (const sx of [-1, 1]) {
+          heroLimb(c, h, sx * r * 0.15, r * 0.3, sx * r * 0.45, r * 0.42, sx * r * 0.52, r * 0.8, r * 0.24, garb);
+          h.rr(sx * r * 0.52 - r * 0.12, r * 0.58, r * 0.24, r * 0.26, r * 0.05); fillInk(iron, 1.4);
+          c.beginPath(); c.moveTo(sx * r * 0.52, r * 0.6); c.lineTo(sx * r * 0.52, r * 0.82); c.strokeStyle = rgba(pal.bright, 0.8); c.lineWidth = Math.max(0.8, r * 0.02); c.stroke();
+          c.beginPath(); c.ellipse(sx * r * 0.56, r * 0.9, r * 0.17, r * 0.07, 0, 0, TAU); fillInk("#120e18", 1.4);
+        }
+        // iron do-maru with laced lames
+        c.beginPath(); c.moveTo(-r * 0.42, -r * 0.38 + br); c.lineTo(r * 0.42, -r * 0.38 + br); c.lineTo(r * 0.36, r * 0.3); c.lineTo(-r * 0.36, r * 0.3); c.closePath(); fillInk(iron, 2.2);
+        for (let k = 0; k < 4; k++) {
+          const y = -r * 0.24 + k * r * 0.13 + br * (1 - k / 4);
+          c.beginPath(); c.moveTo(-r * 0.4, y); c.lineTo(r * 0.4, y); c.strokeStyle = h.INK; c.lineWidth = 1.2; c.stroke();
+          for (let i = -3; i <= 3; i++) { c.beginPath(); c.arc(i * r * 0.1, y + r * 0.05, Math.max(0.6, r * 0.018), 0, TAU); c.fillStyle = pal.bright; c.fill(); }
+        }
+        // kusazuri tassets
+        for (let i = -2; i <= 2; i++) {
+          h.rr(i * r * 0.15 - r * 0.075, r * 0.28, r * 0.15, r * 0.28, r * 0.03); fillInk(i % 2 ? side : iron, 1.3);
+          c.beginPath(); c.moveTo(i * r * 0.15 - r * 0.06, r * 0.42); c.lineTo(i * r * 0.15 + r * 0.06, r * 0.42); c.strokeStyle = h.INK; c.lineWidth = 0.8; c.stroke();
+        }
+        // right arm: spiked tekko gauntlet raised in a guard fist
+        heroLimb(c, h, r * 0.38, -r * 0.3 + br, r * 0.66, -r * 0.24, r * 0.72, -r * 0.02, r * 0.2, garb);
+        const FX = r * 0.7, FY = -r * 0.5 + br;
+        c.save(); c.translate(r * 0.72, -r * 0.02); c.rotate(Math.atan2(FY + r * 0.02, FX - r * 0.72));
+        const GL = Math.hypot(FX - r * 0.72, FY + r * 0.02);
+        h.rr(0, -r * 0.1, GL, r * 0.2, r * 0.05); fillInk(iron, 1.5);
+        for (let k = 0; k < 3; k++) {
+          const gx = GL * (0.2 + k * 0.28);
+          c.beginPath(); c.moveTo(gx - r * 0.05, r * 0.1); c.lineTo(gx, r * 0.2); c.lineTo(gx + r * 0.05, r * 0.1); c.closePath(); fillInk(SS_STEEL[1], 1);
+        }
+        c.beginPath(); c.moveTo(GL * 0.1, -r * 0.1); c.lineTo(GL * 0.1, r * 0.1); c.moveTo(GL * 0.9, -r * 0.1); c.lineTo(GL * 0.9, r * 0.1); c.strokeStyle = pal.bright; c.lineWidth = Math.max(0.8, r * 0.025); c.stroke();
+        c.restore();
+        c.beginPath(); c.arc(FX, FY, r * 0.1, 0, TAU); fillInk(nbCloth(c, FX - r * 0.1, FY - r * 0.1, FX + r * 0.1, FY + r * 0.1, SS_IRON), 1.4);
+        for (let k = -1; k <= 1; k++) {
+          const a = -Math.PI / 2 + k * 0.6, bx = FX + Math.cos(a) * r * 0.09, by = FY + Math.sin(a) * r * 0.09;
+          c.beginPath(); c.moveTo(bx + Math.cos(a + 1.3) * r * 0.035, by + Math.sin(a + 1.3) * r * 0.035); c.lineTo(FX + Math.cos(a) * r * 0.17, FY + Math.sin(a) * r * 0.17);
+          c.lineTo(bx + Math.cos(a - 1.3) * r * 0.035, by + Math.sin(a - 1.3) * r * 0.035); c.closePath(); fillInk(SS_STEEL[0], 1);
+        }
+        // great sode shoulder plates
+        for (const sx of [-1, 1]) {
+          c.save(); c.translate(sx * r * 0.44, -r * 0.3 + br); c.rotate(sx * 0.35);
+          h.rr(-r * 0.13, -r * 0.08, r * 0.26, r * 0.24, r * 0.04); fillInk(side, 1.6);
+          c.beginPath(); c.moveTo(-r * 0.12, r * 0.02); c.lineTo(r * 0.12, r * 0.02); c.moveTo(-r * 0.12, r * 0.09); c.lineTo(r * 0.12, r * 0.09); c.strokeStyle = h.INK; c.lineWidth = 1; c.stroke();
+          c.restore();
+        }
+        // horned kabuto over a fanged menpo
+        const HX = r * 0.06, HY = -r * 0.6 + br, HS = r * 0.2;
+        for (const sx of [-1, 1]) {
+          c.beginPath(); c.moveTo(HX + sx * HS * 0.7, HY - HS * 0.3); c.lineTo(HX + sx * HS * 1.5, HY + HS * 0.5); c.lineTo(HX + sx * HS * 0.8, HY + HS * 0.65); c.closePath(); fillInk(iron, 1.3);
+        }
+        c.beginPath(); c.arc(HX, HY, HS * 0.86, 0, TAU); fillInk(nbCloth(c, HX - HS, HY - HS, HX + HS, HY + HS, SS_IRON), 1.6);
+        h.rr(HX - HS * 0.68, HY - HS * 0.2, HS * 1.36, HS * 0.3, HS * 0.1); c.fillStyle = "#07040c"; c.fill();
+        ssEyes(c, HX, HY - HS * 0.06, HS * 0.3, HS * 0.1, pal.bright, p);
+        c.beginPath(); c.moveTo(HX - HS * 0.45, HY + HS * 0.42); c.lineTo(HX + HS * 0.45, HY + HS * 0.42); c.strokeStyle = h.INK; c.lineWidth = 1.2; c.stroke();
+        c.beginPath();
+        for (let k = -2; k <= 2; k++) { const fx = HX + k * HS * 0.18; c.moveTo(fx - HS * 0.06, HY + HS * 0.42); c.lineTo(fx, HY + HS * (k % 2 ? 0.56 : 0.62)); c.lineTo(fx + HS * 0.06, HY + HS * 0.42); }
+        c.fillStyle = "#f2ecdc"; c.fill();
+        c.beginPath(); c.arc(HX, HY - HS * 0.3, HS * 1.04, Math.PI * 1.02, Math.PI * 1.98); c.closePath(); fillInk(nbCloth(c, HX, HY - HS * 1.3, HX, HY - HS * 0.3, SS_IRON), 1.6);
+        c.beginPath();
+        for (let k = -2; k <= 2; k++) { c.moveTo(HX + k * HS * 0.3, HY - HS * 0.32); c.quadraticCurveTo(HX + k * HS * 0.2, HY - HS * 1.0, HX, HY - HS * 1.32); }
+        c.strokeStyle = "rgba(255,255,255,0.25)"; c.lineWidth = Math.max(0.6, r * 0.012); c.stroke();
+        for (const sx of [-1, 1]) {
+          c.beginPath(); c.moveTo(HX + sx * HS * 0.95, HY - HS * 0.5); c.lineTo(HX + sx * HS * 1.3, HY - HS * 0.75); c.lineTo(HX + sx * HS * 1.2, HY - HS * 0.3); c.closePath(); fillInk(side, 1.2);
+          c.beginPath(); c.moveTo(HX + sx * HS * 0.15, HY - HS * 0.95);
+          c.bezierCurveTo(HX + sx * HS * 0.9, HY - HS * 1.25, HX + sx * HS * 1.0, HY - HS * 2.0, HX + sx * HS * 1.55, HY - HS * 2.55);
+          c.bezierCurveTo(HX + sx * HS * 0.7, HY - HS * 2.1, HX + sx * HS * 0.5, HY - HS * 1.4, HX + sx * HS * 0.05, HY - HS * 1.2); c.closePath();
+          fillInk(nbCloth(c, HX, HY - HS * 2.5, HX, HY - HS, [pal.rim, pal.gold, pal.mid]), 1.4);
+        }
+        wkGlow(c, HX, HY - HS * 1.1, HS * 0.6, pal.bright, 0.4 + 0.4 * p);
+        c.beginPath(); c.arc(HX, HY - HS * 1.1, HS * 0.2, 0, TAU); fillInk(side, 1.2);
+        // the massive steel slab shield
+        c.save(); c.translate(-r * 0.52, r * 0.22 + br); c.rotate(-0.06);
+        const SW = r * 0.42, SH = r * 0.74;
+        h.rr(-SW + r * 0.07, -SH + r * 0.03, SW * 2, SH * 2, r * 0.08); fillInk("#1b1e25", 1.8);
+        h.rr(-SW, -SH, SW * 2, SH * 2, r * 0.08); fillInk(h.metal(-SW, -SH, SW, SH, "#c3c9d3", "#6d7380", "#2a2e37"), 2.2);
+        for (const by of [-SH * 0.62, SH * 0.6]) {
+          c.beginPath(); c.rect(-SW, by - r * 0.05, SW * 2, r * 0.1); fillInk(nbCloth(c, 0, by - r * 0.05, 0, by + r * 0.05, SS_IRON), 1.2);
+          for (let k = -3; k <= 3; k++) { c.beginPath(); c.arc(k * SW * 0.28, by, Math.max(0.7, r * 0.022), 0, TAU); c.fillStyle = "#e6e9ef"; c.fill(); }
+        }
+        c.beginPath(); c.moveTo(-SW * 0.7, SH * 0.2); c.lineTo(-SW * 0.35, SH * 0.32); c.moveTo(SW * 0.4, -SH * 0.32); c.lineTo(SW * 0.65, -SH * 0.2); c.moveTo(SW * 0.2, SH * 0.3); c.lineTo(SW * 0.5, SH * 0.42);
+        c.strokeStyle = "rgba(255,255,255,0.35)"; c.lineWidth = Math.max(0.6, r * 0.012); c.stroke();
+        const CY = -SH * 0.08, CR = r * 0.27;
+        wkGlow(c, 0, CY, CR * 1.5, pal.bright, 0.25 + 0.3 * p);
+        c.beginPath(); c.arc(0, CY, CR, 0, TAU); fillInk(ssSide(c, pal, -CR, CY - CR, CR, CY + CR), 2);
+        c.beginPath(); c.arc(0, CY, CR * 0.86, 0, TAU); c.strokeStyle = pal.gold; c.lineWidth = Math.max(1, r * 0.025); c.stroke();
+        c.beginPath(); c.arc(0, CY, CR * 0.5, 0, TAU); c.fillStyle = pal.rim; c.fill();
+        c.beginPath(); c.arc(CR * 0.18, CY - CR * 0.1, CR * 0.42, 0, TAU); c.fillStyle = pal.deep; c.fill();
+        c.beginPath();
+        for (let k = 0; k < 8; k++) { const a = k * TAU / 8; c.moveTo(Math.cos(a) * CR * 0.6, CY + Math.sin(a) * CR * 0.6); c.lineTo(Math.cos(a) * CR * 0.78, CY + Math.sin(a) * CR * 0.78); }
+        c.strokeStyle = pal.gold; c.lineWidth = Math.max(0.8, r * 0.02); c.stroke();
+        for (const [tx, ty, ph] of [[-SW * 0.62, SH * 0.66, 0], [0, SH * 0.66, 1.7], [SW * 0.62, SH * 0.66, 3.1]]) {
+          const fl = ts ? Math.sin(ts / 260 + ph) * 0.18 : 0.08;
+          ssTag(c, h, pal, tx, ty, r * 0.12, r * 0.24, fl);
+          wkSparkle(c, tx + Math.sin(fl) * -r * 0.24, ty + r * 0.24, r * 0.06 * (0.5 + 0.5 * h.pulse(120, ph)), pal.bright, ph, 0.9);
+        }
+        c.restore();
+        // left tekko gripping the shield's edge
+        const LX = -r * 0.1, LY = -r * 0.1 + br;
+        h.rr(LX - r * 0.08, LY - r * 0.1, r * 0.16, r * 0.2, r * 0.05); fillInk(iron, 1.4);
+        for (let k = 0; k < 3; k++) {
+          const sy = LY - r * 0.07 + k * r * 0.07;
+          c.beginPath(); c.moveTo(LX + r * 0.08, sy - r * 0.025); c.lineTo(LX + r * 0.17, sy); c.lineTo(LX + r * 0.08, sy + r * 0.025); c.closePath(); fillInk(SS_STEEL[0], 1);
+        }
+      },
+      /* Smoke Phantom, the Kawarimi Master — he vanishes in an explosive puff of dark smoke ringed by a shock
+         wave, leaving behind a scarred wooden substitution log (替身木) bound in rope and talisman seals; his
+         fading afterimage flickers in the cloud with glowing eyes while three spinning kunai orbit the decoy. */
+      trickster(c, pal, r, ts, h) {
+        const { fillInk } = h;
+        const p = h.pulse(300, 0.4), ph = ts ? (ts / 1400) % 1 : 0.55;
+        const LX = 0, LY = r * 0.42, LA = 0.18;
+        const KC = [0, r * 0.15], KRX = r * 0.82, KRY = r * 0.42;
+        const kunai = (front) => {
+          for (let k = 0; k < 3; k++) {
+            const a = (ts ? ts / 900 : 0.4) + k * TAU / 3;
+            if ((Math.sin(a) > 0) !== front) continue;
+            const x = KC[0] + Math.cos(a) * KRX, y = KC[1] + Math.sin(a) * KRY, spin = (ts ? ts / 120 : 0) + k * 2.1;
+            ssSpeedArc(c, x, y, r * 0.2, spin + 2.0, spin + 3.6, Math.max(0.8, r * 0.02), pal.bright, 0.6);
+            ssKunai(c, h, pal, x, y, spin, r * 0.4);
+          }
+        };
+        // explosive puff of dark smoke and its shock ring
+        ssSmoke(c, r * 0.05, -r * 0.35, r * 0.62, ts, 7, "#1c1528", 0.85, 8);
+        ssSmoke(c, r * 0.02, -r * 0.3, r * 0.42, ts, 11, "#3a2c52", 0.55, 6);
+        ssSmoke(c, r * 0.06, -r * 0.42, r * 0.5, ts, 19, pal.deep, 0.5, 7);
+        ssSmoke(c, r * 0.0, -r * 0.28, r * 0.3, ts, 23, "#5a4878", 0.45, 5);
+        c.save(); c.globalCompositeOperation = "lighter";
+        c.beginPath(); c.ellipse(r * 0.05, -r * 0.35, r * (0.35 + 0.5 * ph), r * (0.28 + 0.42 * ph), 0, 0, TAU);
+        c.strokeStyle = rgba(pal.bright, 0.7 * (1 - ph)); c.lineWidth = Math.max(1, r * 0.04 * (1 - ph) + 0.5); c.stroke();
+        c.restore();
+        // fading phantom afterimage inside the cloud
+        const fade = ts ? 0.35 + 0.25 * Math.sin(ts / 260) : 0.5;
+        for (const [dx, al] of [[-0.1, 0.35], [0.1, 0.35], [0, 1]]) ssClone(c, pal, r * (0.08 + dx), -r * 0.12, r * 0.4, fade * al);
+        for (let i = 0; i < 7; i++) {
+          const a = i * TAU / 7 + (ts ? ts / 1500 : 0), d = r * (0.5 + 0.2 * heroHash(i + 3));
+          wkSparkle(c, r * 0.05 + Math.cos(a) * d, -r * 0.35 + Math.sin(a) * d * 0.8, r * 0.05 * (0.4 + 0.6 * h.pulse(160, i)), i % 2 ? pal.bright : pal.rim, a, 0.85);
+        }
+        kunai(false);
+        ssSmoke(c, 0, r * 0.86, r * 0.26, ts, 4, "#1c1528", 0.75);
+        // the substitution log
+        c.save(); c.translate(LX, LY); c.rotate(LA);
+        const LR = r * 0.2, LH = r * 0.5;
+        c.beginPath(); c.moveTo(-LR, -LH); c.lineTo(-LR, LH - r * 0.04); c.quadraticCurveTo(0, LH + r * 0.04, LR, LH - r * 0.04); c.lineTo(LR, -LH); c.closePath();
+        fillInk(nbCloth(c, -LR, 0, LR, 0, [SS_WOOD[2], SS_WOOD[1], "#2a190f"]), 2);
+        c.beginPath();
+        for (const [x, y0, y1] of [[-0.12, -0.4, 0.1], [0.02, -0.2, 0.4], [0.12, -0.45, -0.05], [-0.06, 0.15, 0.45]]) { c.moveTo(x * r, y0 * r); c.quadraticCurveTo(x * r + r * 0.02, (y0 + y1) / 2 * r, x * r, y1 * r); }
+        c.strokeStyle = "rgba(20,10,4,0.6)"; c.lineWidth = Math.max(0.6, r * 0.015); c.stroke();
+        c.beginPath(); c.moveTo(-r * 0.1, -r * 0.05); c.lineTo(r * 0.08, r * 0.1); c.moveTo(r * 0.08, -r * 0.05); c.lineTo(-r * 0.1, r * 0.1); c.moveTo(-r * 0.12, -r * 0.32); c.lineTo(r * 0.04, -r * 0.24);
+        c.strokeStyle = "#f0d8b0"; c.lineWidth = Math.max(0.8, r * 0.022); c.stroke();
+        c.beginPath(); c.moveTo(LR, -r * 0.2); c.lineTo(LR + r * 0.12, -r * 0.3); c.lineTo(LR + r * 0.1, -r * 0.24); c.lineTo(LR, -r * 0.14); c.closePath(); fillInk(SS_WOOD[1], 1);
+        c.beginPath(); c.ellipse(0, -LH, LR, r * 0.07, 0, 0, TAU); fillInk(nbCloth(c, -LR, -LH, LR, -LH, SS_WOOD), 1.6);
+        c.beginPath(); c.ellipse(0, -LH, LR * 0.6, r * 0.04, 0, 0, TAU); c.ellipse(0, -LH, LR * 0.25, r * 0.017, 0, 0, TAU);
+        c.strokeStyle = "rgba(70,40,20,0.7)"; c.lineWidth = 0.8; c.stroke();
+        for (const ry of [-r * 0.22, r * 0.24]) {
+          c.beginPath(); c.moveTo(-LR, ry); c.quadraticCurveTo(0, ry + r * 0.05, LR, ry); ssInkStroke(c, h, r * 0.04, "#c8b07a");
+          c.beginPath(); c.moveTo(-LR, ry + r * 0.03); c.quadraticCurveTo(0, ry + r * 0.08, LR, ry + r * 0.03); c.strokeStyle = rgba(pal.bright, 0.85); c.lineWidth = Math.max(0.6, r * 0.015); c.stroke();
+        }
+        const fl = ts ? Math.sin(ts / 300) * 0.12 : 0.05;
+        ssTag(c, h, pal, -r * 0.07, -r * 0.2, r * 0.11, r * 0.22, fl);
+        ssTag(c, h, pal, r * 0.09, r * 0.26, r * 0.1, r * 0.19, -fl * 0.8);
+        wkGlow(c, 0, -r * 0.05, r * 0.18, pal.bright, 0.25 + 0.25 * p);
+        c.restore();
+        kunai(true);
+      },
+      /* Shadow Beast Scout, the Wolf Rider — an agile scout crouched low on a leaping spectral shadow wolf whose
+         glowing eyes and side-coloured war markings burn through its smoky hide; the umbral hound clenches a kunai
+         in its fangs as it bounds over broken bamboo stakes, kicking up shadow dust. */
+      wildrider(c, pal, r, ts, h) {
+        const { fillInk } = h;
+        const p = h.pulse(280, 0.9), lift = ts ? Math.sin(ts / 380) * r * 0.04 : 0, tilt = ts ? Math.sin(ts / 380 + 0.6) * 0.05 : 0;
+        const hide = nbCloth(c, -r * 0.8, -r * 0.3, r * 0.6, r * 0.5, ["#2e2640", "#130e1e", "#040208"]);
+        const garb = nbCloth(c, -r * 0.4, -r * 0.7, r * 0.4, r * 0.2, SS_GARB);
+        // ground shadow, obstacle stakes and rocks
+        c.beginPath(); c.ellipse(0, r * 1.0, r * 0.9, r * 0.1, 0, 0, TAU); c.fillStyle = "rgba(0,0,0,0.35)"; c.fill();
+        for (const [x, top, a] of [[-0.18, 0.66, -0.12], [0.02, 0.72, 0.1], [0.2, 0.8, 0.22]]) {
+          c.save(); c.translate(x * r, r * 1.0); c.rotate(a);
+          c.beginPath(); c.moveTo(-r * 0.045, 0); c.lineTo(-r * 0.045, -(1.0 - top) * r); c.lineTo(r * 0.045, -(1.0 - top) * r - r * 0.07); c.lineTo(r * 0.045, 0); c.closePath();
+          fillInk(nbCloth(c, -r * 0.05, 0, r * 0.05, 0, ["#9fb56a", "#5d7038", "#2b351a"]), 1.3);
+          c.beginPath(); c.moveTo(-r * 0.045, -r * 0.12); c.lineTo(r * 0.045, -r * 0.12); c.strokeStyle = h.INK; c.lineWidth = 0.9; c.stroke();
+          c.restore();
+        }
+        for (const [x, y, s] of [[-0.42, 0.95, 0.12], [0.38, 0.96, 0.1]]) {
+          c.beginPath(); c.moveTo((x - s) * r, y * r); c.lineTo((x - s * 0.6) * r, (y - s * 0.8) * r); c.lineTo((x + s * 0.4) * r, (y - s) * r); c.lineTo((x + s) * r, y * r); c.closePath();
+          fillInk(nbCloth(c, 0, (y - s) * r, 0, y * r, ["#6b6578", "#3a3546", "#16131c"]), 1.3);
+        }
+        ssSmoke(c, -r * 0.82, r * 0.74, r * 0.18, ts, 9, "#1d1530", 0.7);
+        ssSmoke(c, -r * 0.55, r * 0.86, r * 0.14, ts, 13, "#1d1530", 0.6);
+        c.save(); c.translate(0, lift); c.rotate(tilt);
+        // smoky tail
+        const tail = [];
+        for (let i = 0; i <= 8; i++) { const t = i / 8, wv = (ts ? Math.sin(ts / 200 - t * 4) : 0.4) * r * 0.06 * t; tail.push([-r * 0.6 - t * r * 0.44, r * 0.04 - t * r * 0.34 + wv]); }
+        ssRibbon(c, h, tail, (t) => r * (0.18 * (1 - t) + 0.03), hide, 1.4);
+        ssSmoke(c, tail[8][0] + r * 0.03, tail[8][1] + r * 0.02, r * 0.09, ts, 17, "#2a2040", 0.7, 5);
+        // far legs
+        heroLimb(c, h, -r * 0.48, r * 0.3, -r * 0.7, r * 0.5, -r * 0.88, r * 0.62, r * 0.09, hide);
+        heroLimb(c, h, r * 0.3, r * 0.28, r * 0.48, r * 0.46, r * 0.66, r * 0.58, r * 0.09, hide);
+        // body
+        const body = () => {
+          c.beginPath(); c.moveTo(r * 0.45, -r * 0.02);
+          c.bezierCurveTo(r * 0.2, -r * 0.22, -r * 0.4, -r * 0.14, -r * 0.62, r * 0.04);
+          c.bezierCurveTo(-r * 0.78, r * 0.16, -r * 0.72, r * 0.4, -r * 0.5, r * 0.42);
+          c.quadraticCurveTo(-r * 0.1, r * 0.5, r * 0.18, r * 0.4);
+          c.quadraticCurveTo(r * 0.44, r * 0.36, r * 0.45, -r * 0.02); c.closePath();
+        };
+        body(); fillInk(hide, 2.2);
+        c.save(); c.globalCompositeOperation = "lighter"; body(); c.strokeStyle = rgba(pal.bright, 0.35 + 0.25 * p); c.lineWidth = Math.max(1, r * 0.035); c.stroke(); c.restore();
+        c.beginPath();
+        for (let k = 0; k < 3; k++) { const x = -r * (0.05 + k * 0.17); c.moveTo(x + r * 0.05, -r * 0.08); c.lineTo(x - r * 0.04, r * 0.08); c.lineTo(x + r * 0.04, r * 0.26); }
+        ssInkStroke(c, h, r * 0.035, pal.bright);
+        // near legs: front legs reaching, hind legs kicking back
+        heroLimb(c, h, -r * 0.52, r * 0.26, -r * 0.8, r * 0.38, -r * 1.0, r * 0.5, r * 0.11, hide);
+        heroLimb(c, h, r * 0.36, r * 0.22, r * 0.62, r * 0.3, r * 0.82, r * 0.46, r * 0.11, hide);
+        for (const [x, y] of [[-r * 1.0, r * 0.5], [r * 0.82, r * 0.46], [-r * 0.88, r * 0.62], [r * 0.66, r * 0.58]]) {
+          c.beginPath(); c.ellipse(x, y, r * 0.06, r * 0.04, 0.3, 0, TAU); fillInk("#0b0812", 1);
+        }
+        // head, ears, open jaws gripping a kunai
+        heroLimb(c, h, r * 0.3, r * 0.05, r * 0.5, -r * 0.08, r * 0.64, -r * 0.12, r * 0.2, hide);
+        for (const [ex, tx] of [[0.56, 0.52], [0.68, 0.72]]) {
+          c.beginPath(); c.moveTo(ex * r - r * 0.06, -r * 0.24); c.lineTo(tx * r, -r * 0.46); c.lineTo(ex * r + r * 0.06, -r * 0.24); c.closePath(); fillInk(hide, 1.3);
+          c.beginPath(); c.moveTo(ex * r - r * 0.02, -r * 0.26); c.lineTo(tx * r, -r * 0.4); c.lineTo(ex * r + r * 0.02, -r * 0.26); c.closePath(); c.fillStyle = pal.mid; c.fill();
+        }
+        c.beginPath(); c.ellipse(r * 0.66, -r * 0.14, r * 0.17, r * 0.13, 0.1, 0, TAU); fillInk(hide, 1.8);
+        c.beginPath(); c.moveTo(r * 0.72, -r * 0.2); c.lineTo(r * 1.0, -r * 0.1); c.lineTo(r * 0.98, -r * 0.04); c.lineTo(r * 0.76, -r * 0.02); c.closePath(); fillInk(hide, 1.6);
+        const jaw = ts ? 0.05 * Math.sin(ts / 300) : 0;
+        c.beginPath(); c.moveTo(r * 0.74, r * 0.0); c.lineTo(r * 0.96, r * (0.06 + jaw)); c.lineTo(r * 0.92, r * (0.1 + jaw)); c.lineTo(r * 0.7, r * 0.06); c.closePath(); fillInk(hide, 1.4);
+        c.beginPath();
+        for (let k = 0; k < 3; k++) { const fx = r * (0.8 + k * 0.06); c.moveTo(fx, -r * 0.04); c.lineTo(fx + r * 0.015, r * 0.0); c.lineTo(fx + r * 0.03, -r * 0.04); }
+        c.fillStyle = "#f4f0e6"; c.fill();
+        c.beginPath(); c.arc(r * 0.99, -r * 0.08, r * 0.025, 0, TAU); c.fillStyle = "#000"; c.fill();
+        ssKunai(c, h, pal, r * 0.84, r * 0.02, -0.5, r * 0.32);
+        c.beginPath(); c.moveTo(r * 0.58, -r * 0.22); c.lineTo(r * 0.66, -r * 0.08); c.moveTo(r * 0.54, -r * 0.18); c.lineTo(r * 0.6, -r * 0.06);
+        ssInkStroke(c, h, r * 0.025, pal.bright);
+        ssEyes(c, r * 0.72, -r * 0.17, 0, r * 0.03, pal.bright, p);
+        // the scout: trailing scarf, crouched body, arms
+        const scarf = [];
+        for (let i = 0; i <= 8; i++) { const t = i / 8, wv = (ts ? Math.sin(ts / 210 - t * 5) : 0.5) * r * 0.06 * t; scarf.push([r * 0.02 - t * r * 0.88, -r * 0.42 - t * r * 0.3 + wv]); }
+        ssRibbon(c, h, scarf, (t) => r * (0.12 - 0.05 * t), ssSide(c, pal, 0, -r * 0.4, -r * 0.9, -r * 0.7), 1.2);
+        heroLimb(c, h, -r * 0.08, -r * 0.1, r * 0.2, -r * 0.0, r * 0.14, r * 0.16, r * 0.13, garb);
+        heroLimb(c, h, r * 0.14, r * 0.16, r * 0.0, r * 0.2, -r * 0.08, r * 0.14, r * 0.1, garb);
+        c.beginPath(); c.moveTo(-r * 0.18, -r * 0.08); c.lineTo(-r * 0.02, -r * 0.14); c.lineTo(r * 0.14, -r * 0.42); c.lineTo(-r * 0.02, -r * 0.5); c.closePath(); fillInk(garb, 1.8);
+        c.beginPath(); c.moveTo(-r * 0.15, -r * 0.12); c.lineTo(r * 0.0, -r * 0.16); ssInkStroke(c, h, r * 0.05, pal.mid);
+        heroLimb(c, h, r * 0.06, -r * 0.4, r * 0.24, -r * 0.3, r * 0.4, -r * 0.14, r * 0.1, garb);
+        olHand(c, h, r * 0.4, -r * 0.14, r * 0.05, SS_GARB_LIGHT);
+        heroLimb(c, h, -r * 0.02, -r * 0.44, -r * 0.2, -r * 0.42, -r * 0.3, -r * 0.56, r * 0.1, garb);
+        ssKunai(c, h, pal, -r * 0.3, -r * 0.66, -1.9, r * 0.28);
+        olHand(c, h, -r * 0.3, -r * 0.56, r * 0.05, SS_GARB_LIGHT);
+        ssHead(c, h, pal, ts, r * 0.1, -r * 0.6, r * 0.15, { look: 0.15 });
+        c.restore();
+      },
+      /* Fuuma Shuriken Striker, the Windmill Blade — caught mid-leap, he hurls a colossal four-bladed folding Fuuma
+         shuriken whose curved razor edges and lacquered centre ring whirl inside slicing speed arcs, while shadow
+         clones loose spectral copies of the windmill star along his flight. */
+      skirmisher(c, pal, r, ts, h) {
+        const { fillInk } = h;
+        const p = h.pulse(220, 0.5), rot = ts ? ts / 150 : 0.35, bob = ts ? Math.sin(ts / 450) * r * 0.03 : 0;
+        const SX = r * 0.42, SY = -r * 0.42 + bob, SR = r * 0.6;
+        const garb = nbCloth(c, -r * 0.8, -r * 0.5, r * 0.2, r * 0.8, SS_GARB);
+        // wind streaks
+        c.save(); c.globalCompositeOperation = "lighter";
+        for (let i = 0; i < 5; i++) {
+          const ph = ts ? (ts / 600 + i * 0.2) % 1 : i * 0.2, x0 = r * (-0.2 - 0.7 * ph), y0 = r * (0.55 + 0.1 * i - 0.25 * ph);
+          c.beginPath(); c.moveTo(x0, y0); c.lineTo(x0 - r * 0.22, y0 + r * 0.08);
+          c.strokeStyle = rgba(i % 2 ? pal.bright : "#ffffff", 0.45 * Math.sin(Math.PI * ph)); c.lineWidth = Math.max(0.6, r * 0.015); c.stroke();
+        }
+        c.restore();
+        // shadow-clone shurikens trailing the flight
+        for (const [x, y, R, ph] of [[-0.62, -0.82, 0.26, 0], [0.8, 0.62, 0.24, 1.6]]) {
+          const al = 0.35 + 0.25 * Math.sin((ts || 0) / 300 + ph);
+          ssSpeedArc(c, x * r, y * r + bob, R * r * 1.12, rot * 1.2 + ph, rot * 1.2 + ph + 2.2, Math.max(0.8, r * 0.025), pal.bright, al);
+          ssFuuma(c, h, pal, x * r, y * r + bob, R * r, -rot * 1.2 + ph, { ghost: true, alpha: al + 0.15 });
+        }
+        // scarf and headband streaming back
+        const scarf = [];
+        for (let i = 0; i <= 8; i++) { const t = i / 8, wv = (ts ? Math.sin(ts / 200 - t * 5) : 0.5) * r * 0.07 * t; scarf.push([-r * 0.4 - t * r * 0.6, -r * 0.18 + bob - t * r * 0.4 + wv]); }
+        ssRibbon(c, h, scarf, (t) => r * (0.13 - 0.06 * t), ssSide(c, pal, -r * 0.4, -r * 0.2, -r, -r * 0.6), 1.2);
+        // tucked legs and leaping body
+        heroLimb(c, h, -r * 0.55, r * 0.32 + bob, -r * 0.8, r * 0.5, -r * 1.0, r * 0.46 + bob, r * 0.13, garb);
+        heroLimb(c, h, -r * 0.45, r * 0.3 + bob, -r * 0.18, r * 0.42, -r * 0.16, r * 0.5 + bob, r * 0.14, garb);
+        heroLimb(c, h, -r * 0.16, r * 0.5 + bob, -r * 0.2, r * 0.68, -r * 0.34, r * 0.76 + bob, r * 0.11, garb);
+        c.beginPath(); c.ellipse(-r * 1.02, r * 0.46 + bob, r * 0.08, r * 0.045, 0.4, 0, TAU); fillInk("#0d0a12", 1);
+        c.beginPath(); c.ellipse(-r * 0.37, r * 0.78 + bob, r * 0.08, r * 0.045, -0.3, 0, TAU); fillInk("#0d0a12", 1);
+        c.beginPath(); c.moveTo(-r * 0.5, -r * 0.18 + bob); c.lineTo(-r * 0.22, -r * 0.12 + bob); c.lineTo(-r * 0.38, r * 0.36 + bob); c.lineTo(-r * 0.64, r * 0.3 + bob); c.closePath(); fillInk(garb, 2);
+        c.beginPath(); c.moveTo(-r * 0.6, r * 0.18 + bob); c.lineTo(-r * 0.36, r * 0.24 + bob); ssInkStroke(c, h, r * 0.06, pal.mid);
+        // balancing arm
+        heroLimb(c, h, -r * 0.46, -r * 0.12 + bob, -r * 0.7, -r * 0.1, -r * 0.84, r * 0.04 + bob, r * 0.11, garb);
+        olHand(c, h, -r * 0.84, r * 0.04 + bob, r * 0.05, SS_GARB_LIGHT);
+        // the colossal Fuuma shuriken and its slicing arcs
+        for (let k = 0; k < 3; k++) {
+          const a = rot * 1.4 + k * TAU / 3;
+          ssSpeedArc(c, SX, SY, SR * (1.06 + 0.04 * k), a, a + 1.1, Math.max(0.8, r * 0.03), k % 2 ? pal.rim : pal.bright, 0.55 + 0.3 * p);
+        }
+        wkGlow(c, SX, SY, SR * 0.5, pal.bright, 0.3 + 0.2 * p);
+        ssFuuma(c, h, pal, SX, SY, SR, rot);
+        // throwing arm releasing the star
+        heroLimb(c, h, -r * 0.28, -r * 0.1 + bob, -r * 0.06, -r * 0.2, r * 0.1, -r * 0.16 + bob, r * 0.11, garb);
+        c.beginPath(); c.moveTo(-r * 0.02, -r * 0.2 + bob); c.lineTo(r * 0.02, -r * 0.1 + bob); ssInkStroke(c, h, r * 0.04, pal.bright);
+        olHand(c, h, r * 0.1, -r * 0.16 + bob, r * 0.055, SS_GARB_LIGHT);
+        ssHead(c, h, pal, ts, -r * 0.4, -r * 0.32 + bob, r * 0.16, { look: 0.18 });
+      },
+      /* Umbral Dart Sniper, the Silent Bow — a concealed sniper kneeling under a leaf-camouflage hood and ghillie
+         cape over chain-mesh armour, drawing a compact shadow recurve bow nocked with a glowing venom dart; venom
+         smoke wisps curl from its tip toward a glowing, rotating crosshair reticle locked on the target. */
+      harrower(c, pal, r, ts, h) {
+        const { fillInk } = h;
+        const p = h.pulse(300, 0.2), A = -0.32 + (ts ? Math.sin(ts / 1300) * 0.03 : 0), dx = Math.cos(A), dy = Math.sin(A), ux = -dy, uy = dx;
+        const NX = -r * 0.08, NY = -r * 0.08, GX = NX + dx * r * 0.58, GY = NY + dy * r * 0.58;
+        const garb = nbCloth(c, -r * 0.6, -r * 0.5, r * 0.2, r * 0.9, SS_GARB);
+        const camo = nbCloth(c, -r, -r * 0.6, 0, r * 0.6, ["#3f4a35", "#232a1f", "#0b0d09"]);
+        // ghillie cape draping back
+        c.beginPath(); c.moveTo(-r * 0.46, -r * 0.4);
+        c.quadraticCurveTo(-r * 0.86, -r * 0.1, -r * 0.98, r * 0.56);
+        for (let k = 0; k < 6; k++) c.lineTo(-r * (0.98 - k * 0.1 - 0.05), r * (k % 2 ? 0.5 : 0.62));
+        c.quadraticCurveTo(-r * 0.4, r * 0.2, -r * 0.2, -r * 0.3); c.closePath(); fillInk(camo, 1.8);
+        for (let i = 0; i < 9; i++) {
+          const x = -r * (0.4 + 0.5 * heroHash(i + 1)), y = r * (-0.2 + 0.7 * heroHash(i * 3 + 2)), sw = ts ? Math.sin(ts / 500 + i) * 0.2 : 0;
+          c.beginPath(); c.ellipse(x, y, r * 0.06, r * 0.025, i + sw, 0, TAU); c.fillStyle = ["#5a6b3c", "#2f3a22", "#6b5a3a"][i % 3]; c.fill();
+        }
+        // kneeling legs
+        heroLimb(c, h, -r * 0.42, r * 0.34, -r * 0.48, r * 0.6, -r * 0.48, r * 0.86, r * 0.16, garb);
+        heroLimb(c, h, -r * 0.48, r * 0.86, -r * 0.68, r * 0.9, -r * 0.88, r * 0.86, r * 0.12, garb);
+        heroLimb(c, h, -r * 0.24, r * 0.32, -r * 0.08, r * 0.28, r * 0.08, r * 0.38, r * 0.16, garb);
+        heroLimb(c, h, r * 0.08, r * 0.38, r * 0.12, r * 0.64, r * 0.1, r * 0.86, r * 0.12, garb);
+        c.beginPath(); c.ellipse(r * 0.14, r * 0.9, r * 0.12, r * 0.05, 0, 0, TAU); fillInk("#0d0a12", 1.2);
+        // torso with chain-mesh armour
+        const torso = () => { c.beginPath(); c.moveTo(-r * 0.48, -r * 0.2); c.lineTo(-r * 0.16, -r * 0.24); c.lineTo(-r * 0.2, r * 0.38); c.lineTo(-r * 0.5, r * 0.36); c.closePath(); };
+        torso(); fillInk(garb, 2);
+        c.save(); torso(); c.clip();
+        c.beginPath();
+        for (let k = -6; k <= 6; k++) { c.moveTo(k * r * 0.06 - r * 0.6, -r * 0.3); c.lineTo(k * r * 0.06 - r * 0.1, r * 0.4); c.moveTo(k * r * 0.06 - r * 0.1, -r * 0.3); c.lineTo(k * r * 0.06 - r * 0.6, r * 0.4); }
+        c.strokeStyle = "rgba(170,180,200,0.35)"; c.lineWidth = Math.max(0.5, r * 0.012); c.stroke();
+        c.restore();
+        c.beginPath(); c.moveTo(-r * 0.49, r * 0.2); c.lineTo(-r * 0.18, r * 0.18); ssInkStroke(c, h, r * 0.06, pal.mid);
+        // drawing arm (behind the string)
+        heroLimb(c, h, -r * 0.42, -r * 0.16, -r * 0.62, -r * 0.14, -r * 0.6, -r * 0.06, r * 0.11, garb);
+        heroLimb(c, h, -r * 0.6, -r * 0.06, -r * 0.4, -r * 0.02, NX, NY, r * 0.1, garb);
+        // the shadow recurve bow
+        const limb = (sg) => {
+          const mx = GX + sg * ux * r * 0.36 - dx * r * 0.13, my = GY + sg * uy * r * 0.36 - dy * r * 0.13;
+          const nx = GX + sg * ux * r * 0.62 - dx * r * 0.1, ny = GY + sg * uy * r * 0.62 - dy * r * 0.1;
+          const tx = GX + sg * ux * r * 0.68 + dx * r * 0.03, ty = GY + sg * uy * r * 0.68 + dy * r * 0.03;
+          return { mx, my, nx, ny, tx, ty };
+        };
+        const U = limb(-1), D = limb(1);
+        c.beginPath(); c.moveTo(U.tx, U.ty); c.lineTo(NX, NY); c.lineTo(D.tx, D.ty);
+        c.strokeStyle = rgba(pal.rim, 0.9); c.lineWidth = Math.max(0.7, r * 0.012); c.stroke();
+        for (const L of [U, D]) {
+          c.beginPath(); c.moveTo(GX, GY); c.quadraticCurveTo(L.mx, L.my, L.nx, L.ny); c.lineTo(L.tx, L.ty);
+          c.strokeStyle = h.INK; c.lineWidth = r * 0.06 + 2; c.stroke();
+          c.strokeStyle = nbCloth(c, GX, GY, L.tx, L.ty, ["#3a3150", "#1a1526", "#08060c"]); c.lineWidth = r * 0.06; c.stroke();
+          c.strokeStyle = rgba(pal.bright, 0.8); c.lineWidth = Math.max(0.6, r * 0.015); c.stroke();
+        }
+        // venom dart
+        const TX = NX + dx * r * 0.82, TY = NY + dy * r * 0.82;
+        c.beginPath(); c.moveTo(NX - dx * r * 0.04, NY - dy * r * 0.04); c.lineTo(TX - dx * r * 0.1, TY - dy * r * 0.1); ssInkStroke(c, h, r * 0.025, "#2b2236");
+        for (const sg of [-1, 1]) {
+          c.beginPath(); c.moveTo(NX + dx * r * 0.02, NY + dy * r * 0.02); c.lineTo(NX + dx * r * 0.12 + sg * ux * r * 0.05, NY + dy * r * 0.12 + sg * uy * r * 0.05); c.lineTo(NX + dx * r * 0.14, NY + dy * r * 0.14); c.closePath();
+          fillInk(pal.bright, 0.9);
+        }
+        wkGlow(c, TX - dx * r * 0.04, TY - dy * r * 0.04, r * 0.16, SS_VENOM, 0.55 + 0.35 * p);
+        c.beginPath(); c.moveTo(TX, TY); c.lineTo(TX - dx * r * 0.12 + ux * r * 0.03, TY - dy * r * 0.12 + uy * r * 0.03); c.lineTo(TX - dx * r * 0.12 - ux * r * 0.03, TY - dy * r * 0.12 - uy * r * 0.03); c.closePath();
+        fillInk(SS_VENOM, 1);
+        for (let i = 0; i < 4; i++) {
+          const ph = ts ? (ts / 1600 + i * 0.25) % 1 : 0.2 + i * 0.2;
+          ssSmoke(c, TX - dx * r * (0.05 + 0.12 * i) + Math.sin(ph * 5 + i) * r * 0.03, TY - ph * r * 0.3, r * (0.04 + 0.05 * ph), ts, 30 + i, i % 2 ? SS_VENOM : pal.bright, 0.45 * Math.sin(Math.PI * ph), 4);
+        }
+        // bow arm and gloved grip
+        heroLimb(c, h, -r * 0.2, -r * 0.2, (GX - r * 0.2) / 2, (GY - r * 0.24) / 2, GX, GY, r * 0.1, garb);
+        olHand(c, h, GX, GY, r * 0.055, SS_GARB_LIGHT);
+        olHand(c, h, NX, NY, r * 0.05, SS_GARB_LIGHT);
+        // camouflage hood with mesh veil and glowing eyes
+        const HX = -r * 0.32, HY = -r * 0.36, HS = r * 0.17;
+        c.beginPath(); c.moveTo(HX - HS * 1.15, HY + HS * 0.9); c.quadraticCurveTo(HX - HS * 1.4, HY - HS * 1.2, HX - HS * 0.2, HY - HS * 1.55);
+        c.quadraticCurveTo(HX + HS * 1.2, HY - HS * 1.0, HX + HS * 1.1, HY + HS * 0.8); c.closePath(); fillInk(camo, 1.8);
+        c.beginPath(); c.arc(HX + HS * 0.1, HY, HS * 0.78, 0, TAU); c.fillStyle = "#07040c"; c.fill();
+        c.save(); c.beginPath(); c.arc(HX + HS * 0.1, HY, HS * 0.78, 0, TAU); c.clip();
+        c.beginPath();
+        for (let k = -4; k <= 4; k++) { c.moveTo(HX + k * HS * 0.2 - HS * 0.5, HY + HS * 0.05); c.lineTo(HX + k * HS * 0.2 + HS * 0.5, HY + HS); c.moveTo(HX + k * HS * 0.2 + HS * 0.5, HY + HS * 0.05); c.lineTo(HX + k * HS * 0.2 - HS * 0.5, HY + HS); }
+        c.strokeStyle = "rgba(120,130,110,0.5)"; c.lineWidth = Math.max(0.5, r * 0.01); c.stroke();
+        c.restore();
+        ssEyes(c, HX + HS * 0.22, HY - HS * 0.18, HS * 0.26, HS * 0.09, pal.bright, p);
+        for (let i = 0; i < 6; i++) {
+          const a = -2.6 + i * 0.42, sw = ts ? Math.sin(ts / 420 + i) * 0.15 : 0;
+          c.beginPath(); c.ellipse(HX + Math.cos(a) * HS * 1.2, HY + Math.sin(a) * HS * 1.1, HS * 0.32, HS * 0.12, a + sw, 0, TAU);
+          c.fillStyle = ["#5a6b3c", "#3c4a2a", "#6b5a3a"][i % 3]; c.fill(); c.strokeStyle = h.INK; c.lineWidth = 0.8; c.stroke();
+        }
+        // glowing crosshair reticle
+        const RX = NX + dx * r * 1.08, RY = NY + dy * r * 1.08, RR = r * 0.13 * (0.92 + 0.08 * Math.sin((ts || 0) / 200)), ra = ts ? ts / 700 : 0.3;
+        c.save(); c.globalCompositeOperation = "lighter";
+        c.beginPath(); c.arc(RX, RY, RR, 0, TAU); c.strokeStyle = rgba(pal.bright, 0.85); c.lineWidth = Math.max(0.8, r * 0.018); c.stroke();
+        for (let k = 0; k < 4; k++) {
+          const a = ra + k * Math.PI / 2;
+          c.beginPath(); c.arc(RX, RY, RR * 1.35, a, a + 0.9); c.strokeStyle = rgba(pal.rim, 0.65); c.lineWidth = Math.max(0.8, r * 0.015); c.stroke();
+          const b = k * Math.PI / 2;
+          c.beginPath(); c.moveTo(RX + Math.cos(b) * RR * 0.45, RY + Math.sin(b) * RR * 0.45); c.lineTo(RX + Math.cos(b) * RR * 1.6, RY + Math.sin(b) * RR * 1.6);
+          c.strokeStyle = rgba(pal.bright, 0.9); c.lineWidth = Math.max(0.7, r * 0.014); c.stroke();
+        }
+        c.beginPath(); c.arc(RX, RY, Math.max(0.8, r * 0.018), 0, TAU); c.fillStyle = rgba(SS_SEAL, 0.95); c.fill();
+        c.restore();
+      },
+      /* Karakuri Puppet Assassin, the Cursed Marionette — a jointed wooden ninja puppet with a cracked, one-eyed
+         mask, hung from a lacquered control cross by glowing umbral threads; its chest panels swing open on a
+         spinning sawblade, twin hip saws whirl, hinged spring blades unfold from both forearms and a wrist tube
+         fires poison senbon needles. */
+      fury(c, pal, r, ts, h) {
+        const { fillInk } = h;
+        const p = h.pulse(260, 0.8), sw = ts ? Math.sin(ts / 600) * r * 0.03 : 0, jig = ts ? Math.sin(ts / 300) * r * 0.015 : 0;
+        const wood = nbCloth(c, -r * 0.5, -r * 0.8, r * 0.5, r * 0.9, SS_WOOD);
+        const joint = (x, y, s) => { c.beginPath(); c.arc(x, y, s, 0, TAU); fillInk(nbCloth(c, x - s, y - s, x + s, y + s, ["#a07848", "#5e3e22", "#24160c"]), 1.1); c.beginPath(); c.arc(x, y, s * 0.3, 0, TAU); c.fillStyle = pal.gold; c.fill(); };
+        const HX = sw, HY = -r * 0.62 + jig;
+        const J = {
+          lS: [sw - r * 0.3, -r * 0.34 + jig], rS: [sw + r * 0.3, -r * 0.34 + jig],
+          lE: [sw - r * 0.6, -r * 0.2], rE: [sw + r * 0.6, -r * 0.2],
+          lW: [sw - r * 0.62, r * 0.08], rW: [sw + r * 0.58, r * 0.1],
+          lH: [sw - r * 0.14, r * 0.3], rH: [sw + r * 0.14, r * 0.3],
+          lK: [sw - r * 0.26, r * 0.58], rK: [sw + r * 0.24, r * 0.56],
+          lA: [-r * 0.24, r * 0.84], rA: [r * 0.26, r * 0.84],
+        };
+        // control cross and glowing umbral threads
+        const CY = -r * 1.08, ca = ts ? Math.sin(ts / 600) * 0.06 : 0;
+        const bar = (x) => [x * Math.cos(ca), CY + x * Math.sin(ca)];
+        const threads = [[bar(0), [HX, HY - r * 0.17]], [bar(-r * 0.5), J.lW], [bar(r * 0.5), J.rW], [bar(-r * 0.25), J.lK], [bar(r * 0.25), J.rK]];
+        c.save(); c.globalCompositeOperation = "lighter";
+        for (const [a, b] of threads) {
+          c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]);
+          c.strokeStyle = rgba(pal.bright, 0.25 + 0.15 * p); c.lineWidth = Math.max(1, r * 0.03); c.stroke();
+          c.strokeStyle = rgba(pal.rim, 0.85); c.lineWidth = Math.max(0.5, r * 0.008); c.stroke();
+        }
+        c.restore();
+        for (let i = 0; i < threads.length; i++) {
+          const [a, b] = threads[i], ph = ts ? (ts / 800 + i * 0.37) % 1 : 0.5;
+          c.beginPath(); c.arc(a[0] + (b[0] - a[0]) * ph, a[1] + (b[1] - a[1]) * ph, Math.max(0.7, r * 0.022), 0, TAU); c.fillStyle = rgba("#ffffff", 0.9); c.fill();
+          wkGlow(c, b[0], b[1], r * 0.07, pal.bright, 0.6);
+        }
+        c.save(); c.translate(0, CY); c.rotate(ca);
+        h.rr(-r * 0.56, -r * 0.035, r * 1.12, r * 0.07, r * 0.03); fillInk(nbCloth(c, 0, -r * 0.04, 0, r * 0.04, ["#7a1c22", "#3c0d12", "#14050a"]), 1.3);
+        h.rr(-r * 0.035, -r * 0.1, r * 0.07, r * 0.2, r * 0.03); fillInk(nbCloth(c, 0, -r * 0.1, 0, r * 0.1, ["#7a1c22", "#3c0d12", "#14050a"]), 1.2);
+        for (const x of [-0.5, 0.5]) { c.beginPath(); c.arc(x * r, 0, r * 0.03, 0, TAU); c.fillStyle = pal.gold; c.fill(); }
+        c.restore();
+        // poison senbon fired from the left wrist tube
+        const nd = Math.PI + 0.25, ndx = Math.cos(nd), ndy = Math.sin(nd);
+        for (let k = 0; k < 4; k++) {
+          const ph = ts ? (ts / 700 + k * 0.25) % 1 : k * 0.25 + 0.1, d = r * (0.12 + ph * 0.32), off = (k - 1.5) * r * 0.04 * ph;
+          const x = J.lW[0] + ndx * d - ndy * off, y = J.lW[1] + ndy * d + ndx * off;
+          c.save(); c.globalCompositeOperation = "lighter";
+          c.beginPath(); c.moveTo(x - ndx * r * 0.22, y - ndy * r * 0.22); c.lineTo(x, y); c.strokeStyle = rgba(SS_VENOM, 0.35 * (1 - ph)); c.lineWidth = Math.max(0.8, r * 0.03); c.stroke();
+          c.restore();
+          c.beginPath(); c.moveTo(x - ndx * r * 0.14, y - ndy * r * 0.14); c.lineTo(x, y); c.strokeStyle = SS_STEEL[0]; c.lineWidth = Math.max(0.7, r * 0.012); c.stroke();
+          c.beginPath(); c.arc(x, y, Math.max(0.7, r * 0.014), 0, TAU); c.fillStyle = SS_VENOM; c.fill();
+        }
+        // spring blades unfolding from both elbows
+        const unfold = ts ? 0.5 + 0.5 * Math.sin(ts / 700) : 0.8;
+        for (const [E, sx] of [[J.lE, -1], [J.rE, 1]]) {
+          const a = sx > 0 ? 1.5 - unfold * 2.4 : Math.PI - (1.5 - unfold * 2.4), L = r * 0.48;
+          c.save(); c.translate(E[0], E[1]); c.rotate(a);
+          c.beginPath(); c.moveTo(0, -r * 0.03); c.lineTo(L * 0.82, -r * 0.03); c.lineTo(L, r * 0.03 * sx); c.lineTo(L * 0.1, r * 0.04); c.closePath();
+          fillInk(h.metal(0, -r * 0.04, 0, r * 0.04, ...SS_STEEL), 1.1);
+          c.save(); c.globalCompositeOperation = "lighter";
+          c.beginPath(); c.moveTo(L * 0.1, r * 0.035); c.lineTo(L * 0.95, r * 0.02); c.strokeStyle = rgba(pal.bright, 0.5 + 0.4 * unfold); c.lineWidth = Math.max(0.8, r * 0.02); c.stroke();
+          c.restore();
+          c.restore();
+        }
+        // legs
+        for (const [H, K, A] of [[J.lH, J.lK, J.lA], [J.rH, J.rK, J.rA]]) {
+          heroLimb(c, h, H[0], H[1], (H[0] + K[0]) / 2, (H[1] + K[1]) / 2, K[0], K[1], r * 0.1, wood);
+          heroLimb(c, h, K[0], K[1], (K[0] + A[0]) / 2, (K[1] + A[1]) / 2, A[0], A[1], r * 0.09, wood);
+          h.rr(A[0] - r * 0.09, A[1] + r * 0.02, r * 0.18, r * 0.08, r * 0.02); fillInk(wood, 1.2);
+          joint(K[0], K[1], r * 0.055); joint(A[0], A[1], r * 0.04);
+        }
+        // pelvis, tattered cloth skirt and twin hip saws
+        const hs = ts ? ts / 90 : 0.3;
+        ssSaw(c, h, pal, sw - r * 0.32, r * 0.2, r * 0.11, -hs, 10);
+        ssSaw(c, h, pal, sw + r * 0.32, r * 0.2, r * 0.11, hs, 10);
+        c.beginPath(); c.moveTo(sw - r * 0.22, r * 0.06); c.lineTo(sw + r * 0.22, r * 0.06);
+        for (let k = 0; k < 5; k++) c.lineTo(sw + r * (0.22 - k * 0.11), r * (k % 2 ? 0.34 : 0.42));
+        c.closePath(); fillInk(nbCloth(c, 0, r * 0.06, 0, r * 0.42, SS_GARB), 1.5);
+        c.beginPath(); c.moveTo(sw - r * 0.22, r * 0.08); c.lineTo(sw + r * 0.22, r * 0.08); ssInkStroke(c, h, r * 0.04, pal.mid);
+        joint(J.lH[0], J.lH[1], r * 0.05); joint(J.rH[0], J.rH[1], r * 0.05);
+        // segmented torso with chest panels swung open on a spinning sawblade
+        c.beginPath(); c.moveTo(sw - r * 0.26, -r * 0.38 + jig); c.lineTo(sw + r * 0.26, -r * 0.38 + jig); c.lineTo(sw + r * 0.2, r * 0.06); c.lineTo(sw - r * 0.2, r * 0.06); c.closePath();
+        fillInk("#0a0710", 1.8);
+        wkGlow(c, sw, -r * 0.16 + jig, r * 0.26, pal.bright, 0.35 + 0.3 * p);
+        ssSaw(c, h, pal, sw, -r * 0.16 + jig, r * 0.19, ts ? ts / 70 : 0.2, 14);
+        for (const sx of [-1, 1]) {
+          c.beginPath(); c.moveTo(sw + sx * r * 0.24, -r * 0.37 + jig); c.lineTo(sw + sx * r * 0.42, -r * 0.3 + jig); c.lineTo(sw + sx * r * 0.36, r * 0.02); c.lineTo(sw + sx * r * 0.2, r * 0.05); c.closePath();
+          fillInk(wood, 1.5);
+          c.beginPath(); c.moveTo(sw + sx * r * 0.3, -r * 0.3 + jig); c.lineTo(sw + sx * r * 0.3, -r * 0.02); c.strokeStyle = rgba(pal.bright, 0.85); c.lineWidth = Math.max(0.8, r * 0.02); c.stroke();
+        }
+        // arms with wrist launcher
+        for (const [S, E, W] of [[J.lS, J.lE, J.lW], [J.rS, J.rE, J.rW]]) {
+          heroLimb(c, h, S[0], S[1], (S[0] + E[0]) / 2, (S[1] + E[1]) / 2 - r * 0.03, E[0], E[1], r * 0.09, wood);
+          heroLimb(c, h, E[0], E[1], (E[0] + W[0]) / 2, (E[1] + W[1]) / 2, W[0], W[1], r * 0.08, wood);
+          joint(S[0], S[1], r * 0.06); joint(E[0], E[1], r * 0.05);
+          c.beginPath(); c.arc(W[0], W[1], r * 0.05, 0, TAU); fillInk(wood, 1.1);
+          c.beginPath(); c.moveTo(W[0] - r * 0.04, W[1] - r * 0.04); c.lineTo(W[0] - r * 0.02, W[1] - r * 0.1); c.moveTo(W[0] + r * 0.03, W[1] - r * 0.04); c.lineTo(W[0] + r * 0.04, W[1] - r * 0.1);
+          c.strokeStyle = h.INK; c.lineWidth = Math.max(1, r * 0.022); c.stroke();
+        }
+        c.save(); c.translate(J.lW[0], J.lW[1]); c.rotate(nd);
+        h.rr(-r * 0.02, -r * 0.035, r * 0.14, r * 0.07, r * 0.02); fillInk(nbCloth(c, 0, -r * 0.04, 0, r * 0.04, SS_IRON), 1.1);
+        c.restore();
+        // neck joint and cracked one-eyed puppet mask
+        joint(sw, -r * 0.42 + jig, r * 0.05);
+        c.beginPath(); c.arc(HX, HY, r * 0.2, 0, TAU); fillInk(nbCloth(c, HX - r * 0.2, HY - r * 0.2, HX + r * 0.2, HY + r * 0.2, SS_GARB), 1.5);
+        c.beginPath(); c.ellipse(HX + r * 0.02, HY + r * 0.02, r * 0.14, r * 0.17, 0, 0, TAU); fillInk(nbCloth(c, HX, HY - r * 0.17, HX, HY + r * 0.19, ["#f4ead6", "#d9c7a4", "#9c8862"]), 1.4);
+        c.beginPath(); c.moveTo(HX - r * 0.09, HY + r * 0.08); c.lineTo(HX - r * 0.09, HY + r * 0.17); c.moveTo(HX + r * 0.11, HY + r * 0.08); c.lineTo(HX + r * 0.11, HY + r * 0.17);
+        c.strokeStyle = h.INK; c.lineWidth = 1; c.stroke();
+        c.beginPath(); c.moveTo(HX - r * 0.05, HY + r * 0.1); c.lineTo(HX + r * 0.08, HY + r * 0.1); c.strokeStyle = SS_SEAL; c.lineWidth = Math.max(0.8, r * 0.02); c.stroke();
+        c.beginPath(); c.ellipse(HX - r * 0.05, HY - r * 0.02, r * 0.035, r * 0.02, 0.2, 0, TAU); c.fillStyle = "#07040c"; c.fill();
+        ssEyes(c, HX + r * 0.07, HY - r * 0.02, 0, r * 0.022, pal.bright, p);
+        c.beginPath(); c.moveTo(HX + r * 0.03, HY - r * 0.15); c.lineTo(HX + r * 0.0, HY - r * 0.08); c.lineTo(HX + r * 0.04, HY - r * 0.04); c.lineTo(HX + r * 0.01, HY + r * 0.03);
+        c.strokeStyle = "rgba(40,20,10,0.8)"; c.lineWidth = Math.max(0.6, r * 0.012); c.stroke();
+        c.beginPath(); c.moveTo(HX - r * 0.13, HY + r * 0.0); c.lineTo(HX - r * 0.07, HY + r * 0.05); c.moveTo(HX + r * 0.16, HY + r * 0.0); c.lineTo(HX + r * 0.1, HY + r * 0.05);
+        c.strokeStyle = rgba(SS_SEAL, 0.85); c.lineWidth = Math.max(0.6, r * 0.014); c.stroke();
+        c.beginPath(); c.moveTo(HX - r * 0.19, HY - r * 0.08); c.quadraticCurveTo(HX, HY - r * 0.16, HX + r * 0.19, HY - r * 0.08); ssInkStroke(c, h, r * 0.05, pal.mid);
       },
     },
   };
