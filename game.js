@@ -283,6 +283,132 @@
     return `rgba(${r},${g},${b},${a})`;
   }
 
+  /* ---- Opt-in render diagnostics (developer only) ----
+   * Off by default: while off, no extra timing calls are made and nothing is logged. Enable with the
+   * query flag `?sgperf=1`, with localStorage "sg.perf" = "1" (persists across reloads), or by calling
+   * `SG.perf.enable()` in the console. `SG.perf.report()` prints (console.table) and returns per-theme
+   * frame statistics; each theme switch logs ONE summary line after the following frames were observed.
+   * `SG.perf.reset()` clears the stats, `SG.perf.disable()` turns it off (pass `true` to also clear the
+   * persisted flag). Segment times are main-thread time spent issuing canvas commands; GPU rasterisation
+   * and compositing happen later and are only visible in the requestAnimationFrame interval figures. */
+  const PERF_STORAGE_KEY = "sg.perf";
+  const PERF_RING = 600;              // recent frame intervals kept per theme (for percentiles)
+  const PERF_LONG_FRAME_MS = 25;      // RAF interval counted as a visible hitch (> 1.5 frames at 60 Hz)
+  const PERF_SWITCH_FRAMES = 60;      // frames observed after a theme switch before its summary is logged
+  const perf = {
+    on: false, buckets: new Map(), lastFrameTs: null, switchRec: null, switches: [],
+    iconMs: 0, iconSlices: 0, warmMs: 0, warmIcons: 0,
+  };
+  const perfSeg = { update: 0, render: 0, terrain: 0, pieces: 0, figures: 0, fx: 0, screen: 0 };
+  function perfNow() {
+    try {
+      if (typeof performance !== "undefined" && performance && typeof performance.now === "function") return performance.now();
+    } catch (e) { /* fall through */ }
+    return Date.now();
+  }
+  function perfBucket(id) {
+    let b = perf.buckets.get(id);
+    if (!b) {
+      b = { frames: 0, intervals: [], intervalSum: 0, intervalCount: 0, longFrames: 0, update: 0, render: 0, renderMax: 0,
+            terrain: 0, pieces: 0, piecesMax: 0, figures: 0, fx: 0, screen: 0 };
+      perf.buckets.set(id, b);
+    }
+    return b;
+  }
+  function perfPercentile(values, q) {
+    if (!values.length) return 0;
+    const sorted = values.slice().sort((a, b) => a - b);
+    return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+  }
+  const perfRound = v => Math.round(v * 100) / 100;
+  function perfRecordFrame(ts, themeId) {
+    const b = perfBucket(themeId);
+    let interval = null;
+    if (perf.lastFrameTs !== null) {
+      const d = ts - perf.lastFrameTs;
+      if (d > 0 && d < 1000) {      // ignore pauses (hidden tab, debugger)
+        interval = d;
+        b.intervals.push(d); if (b.intervals.length > PERF_RING) b.intervals.shift();
+        b.intervalSum += d; b.intervalCount++;
+        if (d > PERF_LONG_FRAME_MS) b.longFrames++;
+      }
+    }
+    perf.lastFrameTs = ts;
+    b.frames++;
+    b.update += perfSeg.update; b.render += perfSeg.render; b.renderMax = Math.max(b.renderMax, perfSeg.render);
+    b.terrain += perfSeg.terrain; b.pieces += perfSeg.pieces; b.piecesMax = Math.max(b.piecesMax, perfSeg.pieces);
+    b.figures += perfSeg.figures; b.fx += perfSeg.fx; b.screen += perfSeg.screen;
+    const s = perf.switchRec;
+    if (s && s.to === themeId) {
+      if (s.frames === 0) { s.firstFrameMs = perfNow() - s.at; s.firstRenderMs = perfSeg.render; s.firstInterval = interval; }
+      s.frames++;
+      if (interval !== null) { s.maxInterval = Math.max(s.maxInterval, interval); if (interval > PERF_LONG_FRAME_MS) s.longFrames++; }
+      s.maxRender = Math.max(s.maxRender, perfSeg.render);
+      if (s.frames >= PERF_SWITCH_FRAMES) perfFinishSwitch();
+    }
+    for (const k in perfSeg) perfSeg[k] = 0;
+  }
+  function perfFinishSwitch() {
+    const s = perf.switchRec;
+    if (!s) return;
+    perf.switchRec = null;
+    const summary = {
+      from: s.from, to: s.to, handlerMs: perfRound(s.handlerMs),
+      switchToFirstFrameMs: s.firstFrameMs === null ? null : perfRound(s.firstFrameMs),
+      firstRenderMs: s.firstRenderMs === null ? null : perfRound(s.firstRenderMs),
+      firstIntervalMs: s.firstInterval === null ? null : perfRound(s.firstInterval),
+      framesObserved: s.frames, maxIntervalMs: perfRound(s.maxInterval), longFrames: s.longFrames, maxRenderMs: perfRound(s.maxRender),
+      iconRepaintMs: perfRound(perf.iconMs - s.iconMs0), iconSlices: perf.iconSlices - s.iconSlices0,
+    };
+    perf.switches.push(summary); if (perf.switches.length > 20) perf.switches.shift();
+    if (typeof console !== "undefined" && console.info) console.info("[Stygian Gambit perf] theme switch", JSON.stringify(summary));
+  }
+  function perfReport() {
+    const rows = [];
+    perf.buckets.forEach((b, id) => {
+      const n = b.frames || 1;
+      rows.push({
+        theme: id, frames: b.frames,
+        avgIntervalMs: perfRound(b.intervalCount ? b.intervalSum / b.intervalCount : 0),
+        p95IntervalMs: perfRound(perfPercentile(b.intervals, 0.95)), maxIntervalMs: perfRound(b.intervals.length ? Math.max(...b.intervals) : 0),
+        longFrames: b.longFrames,
+        avgUpdateMs: perfRound(b.update / n), avgRenderMs: perfRound(b.render / n), maxRenderMs: perfRound(b.renderMax),
+        avgTerrainMs: perfRound(b.terrain / n), avgPiecesMs: perfRound(b.pieces / n), maxPiecesMs: perfRound(b.piecesMax),
+        avgFiguresPerFrame: perfRound(b.figures / n), avgFxMs: perfRound(b.fx / n), avgScreenMs: perfRound(b.screen / n),
+      });
+    });
+    const result = { themes: rows, switches: perf.switches.slice(), iconRepaintMs: perfRound(perf.iconMs),
+                     warmIcons: perf.warmIcons, warmMs: perfRound(perf.warmMs) };
+    if (typeof console !== "undefined") {
+      if (console.table) console.table(rows); else if (console.info) console.info(JSON.stringify(rows));
+      if (console.info && result.switches.length) console.info("[Stygian Gambit perf] recent switches", JSON.stringify(result.switches));
+    }
+    return result;
+  }
+  function perfReset() {
+    perf.buckets.clear(); perf.switches = []; perf.switchRec = null; perf.lastFrameTs = null;
+    perf.iconMs = 0; perf.iconSlices = 0; perf.warmMs = 0; perf.warmIcons = 0;
+    for (const k in perfSeg) perfSeg[k] = 0;
+  }
+  function perfEnable(persist) {
+    if (persist) { try { localStorage.setItem(PERF_STORAGE_KEY, "1"); } catch (e) { /* storage blocked */ } }
+    if (perf.on) return;
+    perfReset();
+    perf.on = true;
+    if (typeof console !== "undefined" && console.info) console.info("[Stygian Gambit perf] diagnostics on — switch skins, then run SG.perf.report()");
+  }
+  function perfDisable(clearPersisted) {
+    if (clearPersisted) { try { localStorage.removeItem(PERF_STORAGE_KEY); } catch (e) { /* storage blocked */ } }
+    perf.on = false; perf.switchRec = null;
+  }
+  SG.perf = { enable: perfEnable, disable: perfDisable, reset: perfReset, report: perfReport };
+  (function enablePerfFromFlags() {
+    let flag = false;
+    try { flag = typeof location !== "undefined" && /(?:^|[?&])sgperf=1(?:&|$)/.test(String(location.search || "")); } catch (e) { flag = false; }
+    if (!flag) { try { flag = localStorage.getItem(PERF_STORAGE_KEY) === "1"; } catch (e) { flag = false; } }
+    if (flag) perfEnable(false);
+  })();
+
   /* ---- Local records (localStorage, guarded) ---- */
   function loadStore(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch (e) { return fallback; } }
   function saveStore(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* private mode / blocked */ } }
@@ -1792,6 +1918,32 @@
     return { deep: "#1f5a2c", mid: "#2f9a48", bright: "#5be07a", rim: "#c6ffd4", gold: "#d8f0a0" };
   }
 
+  // Per-frame constants of drawPiece, built once: a CanvasGradient is resolved in the user space that is
+  // current when it is used to fill, so one halo gradient per (glow colour, radius) paints exactly like
+  // a freshly created one under each piece's own transform. Both maps hold a handful of entries.
+  const pieceHaloGradients = new Map();
+  function pieceHalo(glow, r) {
+    const key = glow + "|" + r;
+    let g = pieceHaloGradients.get(key);
+    if (!g) {
+      g = ctx.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 1.85);
+      g.addColorStop(0, hexToRgba(glow, 0.4)); g.addColorStop(1, hexToRgba(glow, 0));
+      if (pieceHaloGradients.size >= 32) pieceHaloGradients.clear();
+      pieceHaloGradients.set(key, g);
+    }
+    return g;
+  }
+  const plinthRims = new Map();
+  function plinthRim(gold) {
+    let v = plinthRims.get(gold);
+    if (v === undefined) {
+      v = hexToRgba(gold, 0.7);
+      if (plinthRims.size >= 32) plinthRims.clear();
+      plinthRims.set(gold, v);
+    }
+    return v;
+  }
+
   function drawPiece(p, ts) {
     if (!p.alive && p.animState !== "dying") return;
     const dying = p.animState === "dying";
@@ -1833,7 +1985,7 @@
       ctx.save(); ctx.globalAlpha = fadeT;
       ctx.beginPath(); ctx.ellipse(p.x, p.y + dn * r * 1.0, r * 0.78 * scale, r * 0.26 * scale, 0, 0, Math.PI * 2);
       ctx.fillStyle = "rgba(18,10,20,0.9)"; ctx.fill();
-      ctx.lineWidth = 1.5; ctx.strokeStyle = hexToRgba(pal.gold, 0.7); ctx.stroke(); ctx.restore();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = plinthRim(pal.gold); ctx.stroke(); ctx.restore();
     }
 
     ctx.save();
@@ -1855,9 +2007,7 @@
     }
 
     if (!dying) {
-      const halo = ctx.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 1.85);
-      halo.addColorStop(0, hexToRgba(colors.glow, 0.4)); halo.addColorStop(1, hexToRgba(colors.glow, 0));
-      ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(0, 0, r * 1.85, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = pieceHalo(colors.glow, r); ctx.beginPath(); ctx.arc(0, 0, r * 1.85, 0, Math.PI * 2); ctx.fill();
     }
     ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 3;
     paintFigure(p.type, pal, r, ts, ctx, p.side);
@@ -1914,22 +2064,38 @@
   const failedPainters = new Set();
   const FALLBACK_INITIALS = { sovereign: "S", reaper: "R", juggernaut: "J", trickster: "T", wildrider: "W", skirmisher: "K", harrower: "H", fury: "F" };
 
-  // Run a painter with save/restore depth tracking so a throw mid-draw (with nested c.save() calls
-  // still open) unwinds the canvas exactly back to the baseline instead of leaking transforms/styles.
+  // Painters run under save/restore depth tracking so a throw mid-draw (with nested c.save() calls still
+  // open) unwinds the canvas exactly back to the baseline instead of leaking transforms/styles, and a
+  // stray extra c.restore() inside a painter can never pop state its caller saved.
+  // The tracking wrappers are installed on a context ONCE and then stay: installing and deleting own
+  // save/restore properties around every figure (as before) pushes the context object into the engines'
+  // slow "dictionary" property mode, which taxes every later ctx.* access on every figure, every frame.
+  // Outside a painter (floor < 0) the wrappers just count and pass through.
+  const PAINT_GUARD = typeof Symbol === "function" ? Symbol("sgPaintGuard") : "__sgPaintGuard";
+  function paintGuardFor(c) {
+    const existing = c[PAINT_GUARD];
+    if (existing) return existing;
+    const baseSave = c.save, baseRestore = c.restore;
+    const g = { depth: 0, floor: -1, baseRestore };
+    c.save = function () { g.depth++; return baseSave.call(c); };
+    c.restore = function () {
+      if (g.floor >= 0 && g.depth <= g.floor) return;   // never pop below the running painter's baseline
+      if (g.depth > 0) g.depth--;
+      return baseRestore.call(c);
+    };
+    c[PAINT_GUARD] = g;
+    return g;
+  }
   function runPainter(painter, c, pal, r, ts) {
-    const hadOwnSave = Object.prototype.hasOwnProperty.call(c, "save");
-    const hadOwnRestore = Object.prototype.hasOwnProperty.call(c, "restore");
-    const ownSave = c.save, ownRestore = c.restore;
-    let depth = 0;
-    c.save = function () { depth++; return ownSave.call(c); };
-    c.restore = function () { if (depth > 0) { depth--; return ownRestore.call(c); } }; // never pop below baseline
+    const g = paintGuardFor(c);
+    const outerFloor = g.floor;                          // supports a painter that paints a nested figure
+    g.floor = g.depth;
     try {
       const helpers = typeof SG.createFigureHelpers === "function" ? SG.createFigureHelpers(c, pal, r, ts) : {};
       painter(c, pal, r, ts, helpers);
     } finally {
-      while (depth > 0) { depth--; ownRestore.call(c); }
-      if (hadOwnSave) c.save = ownSave; else delete c.save;
-      if (hadOwnRestore) c.restore = ownRestore; else delete c.restore;
+      while (g.depth > g.floor) { g.depth--; g.baseRestore.call(c); }
+      g.floor = outerFloor;
     }
   }
 
@@ -1950,36 +2116,43 @@
     c.fillText(letter, 0, r * 0.05);
   }
 
-  function paintFigure(type, pal, r, ts, c, side) {
+  // Returns true when the painter completed. A broken painter must never stop the render loop: it is
+  // remembered (and skipped from then on) so the caller can try the next candidate.
+  function tryPainter(painter, type, c, pal, r, ts) {
+    if (failedPainters.has(painter)) return false;
+    c.save();
+    try {
+      runPainter(painter, c, pal, r, ts);
+      return true;
+    } catch (err) {
+      failedPainters.add(painter);
+      if (typeof console !== "undefined") console.warn("[Stygian Gambit] figure painter failed for", type, err);
+      return false;
+    } finally {
+      c.restore();
+    }
+  }
+
+  // Candidates, in order: the side override (if any) or the theme painter, then classic's painter for the
+  // role (or classic.default), then the built-in disc. Resolved per call without allocations because this
+  // runs for every figure on every frame. `themeId` is only passed by the icon pre-render (warm-up); every
+  // other caller paints with the active theme.
+  const hasOwn = Object.prototype.hasOwnProperty;
+  function paintFigure(type, pal, r, ts, c, side, themeId) {
     c = c || ctx;
     ts = ts || 0;
     const themes = SG.THEMES || {};
     const classic = (themes.classic && themes.classic.painters) || {};
-    const theme = themes[(state && state.theme) || activeThemeId || "classic"] || themes.classic;
+    const theme = themes[themeId || (state && state.theme) || activeThemeId || "classic"] || themes.classic;
     const fallback = classic[type] || classic.default;
-    const candidates = [];
-    const own = (o, k) => !!o && Object.prototype.hasOwnProperty.call(o, k);
-    const sideSet = side && theme && own(theme.sidePainters, side) ? theme.sidePainters[side] : null;
-    const sidePainter = own(sideSet, type) && typeof sideSet[type] === "function" ? sideSet[type] : null;
+    const sidePainters = theme ? theme.sidePainters : null;
+    const sideSet = side && sidePainters && hasOwn.call(sidePainters, side) ? sidePainters[side] : null;
+    const sidePainter = sideSet && hasOwn.call(sideSet, type) && typeof sideSet[type] === "function" ? sideSet[type] : null;
     const primary = sidePainter || (theme && theme.painters && theme.painters[type]) || fallback;
-    if (primary) candidates.push(primary);
-    if (fallback && fallback !== primary) candidates.push(fallback);
     c.save();
     try {
-      for (const painter of candidates) {
-        if (failedPainters.has(painter)) continue;
-        c.save();
-        try {
-          runPainter(painter, c, pal, r, ts);
-          return;
-        } catch (err) {
-          // A broken painter must never stop the render loop: remember it and try the next candidate.
-          failedPainters.add(painter);
-          if (typeof console !== "undefined") console.warn("[Stygian Gambit] figure painter failed for", type, err);
-        } finally {
-          c.restore();
-        }
-      }
+      if (primary && tryPainter(primary, type, c, pal, r, ts)) return;
+      if (fallback && fallback !== primary && tryPainter(fallback, type, c, pal, r, ts)) return;
       paintFallbackFigure(c, type, pal, r);
     } finally {
       c.restore();
@@ -1987,7 +2160,7 @@
   }
 
   // Draw a role's figure (static pose, ts = 0) with its halo into a w x h 2D context.
-  function drawIconFigure(lc, type, side, w, h) {
+  function drawIconFigure(lc, type, side, w, h, themeId) {
     const r = w * 0.30;
     const colors = glyphColor(side), pal = sidePalette(side);
     lc.save();
@@ -1995,7 +2168,7 @@
     const halo = lc.createRadialGradient(0, 0, r * 0.3, 0, 0, r * 1.7);
     halo.addColorStop(0, hexToRgba(colors.glow, 0.4)); halo.addColorStop(1, hexToRgba(colors.glow, 0));
     lc.fillStyle = halo; lc.beginPath(); lc.arc(0, 0, r * 1.7, 0, Math.PI * 2); lc.fill();
-    paintFigure(type, pal, r, 0, lc, side);
+    paintFigure(type, pal, r, 0, lc, side, themeId);
     lc.restore();
   }
 
@@ -2007,14 +2180,15 @@
   // Bounded LRU: 12 themes x 8 role/side pairs at 52px fits comfortably (~10 KB per image).
   const ICON_CACHE_MAX = 128;
   const iconCache = new Map();
-  // Same resolution as paintFigure(): the theme the figure would actually be drawn with right now.
-  function currentFigureTheme() {
+  // Same resolution as paintFigure(): the theme the figure would actually be drawn with right now
+  // (or, for the warm-up pre-render, with the given theme id).
+  function currentFigureTheme(themeId) {
     const themes = SG.THEMES || {};
-    const id = (state && state.theme) || activeThemeId || "classic";
+    const id = themeId || (state && state.theme) || activeThemeId || "classic";
     return themes[id] ? { id, theme: themes[id] } : { id: "classic", theme: themes.classic };
   }
-  function iconImage(type, side, w, h) {
-    const { id, theme } = currentFigureTheme();
+  function iconImage(type, side, w, h, themeId) {
+    const { id, theme } = currentFigureTheme(themeId);
     const key = `${id}|${type}|${side}|${w}x${h}`;
     const hit = iconCache.get(key);
     if (hit && hit.theme === theme) {
@@ -2023,7 +2197,7 @@
     }
     const img = document.createElement("canvas");
     img.width = w; img.height = h;
-    drawIconFigure(img.getContext("2d"), type, side, w, h); // only cached if painting completed
+    drawIconFigure(img.getContext("2d"), type, side, w, h, id); // only cached if painting completed
     iconCache.delete(key);
     iconCache.set(key, { theme, img });
     while (iconCache.size > ICON_CACHE_MAX) iconCache.delete(iconCache.keys().next().value);
@@ -2051,6 +2225,17 @@
   }
   function buildLegendIcons() {
     legendIconJobs().forEach(j => paintIcon(j.cv, j.type, j.side));
+    refreshRoleNameLabels();
+  }
+  function refreshRoleNameLabels() {
+    const themeId = activeThemeId || "classic";
+    const lang = (SG.I18N && SG.I18N.lang) || "en";
+    document.querySelectorAll(".role-name-label").forEach(label => {
+      const piece = label.closest(".icon-caption")?.querySelector("canvas")?.dataset.piece ||
+        label.closest(".icon-caption")?.dataset.piece;
+      const entry = piece && SG.ROLE_NAMES && SG.ROLE_NAMES[themeId] && SG.ROLE_NAMES[themeId][piece];
+      label.textContent = entry ? (entry[lang] || entry.en || entry.zh) : (piece || "");
+    });
   }
 
   // Deferred, coalesced repaint of the theme-dependent icons after a theme switch, so the input that
@@ -2094,6 +2279,7 @@
         }
         if (performance.now() - start >= ICON_SLICE_MS) break;
       }
+      if (perf.on) { perf.iconMs += perfNow() - start; perf.iconSlices++; }
     } finally {
       if (iconRepaint.queue.length || iconRepaint.queueGen !== iconRepaint.gen) runIconRepaintSoon();
       else iconRepaint.pending = false;
@@ -2104,6 +2290,106 @@
     if (iconRepaint.pending) return;
     iconRepaint.pending = true;
     runIconRepaintSoon();
+  }
+
+  // Theme warm-up. Once the player shows intent to change skin (pointer over, focus on, or press on a
+  // theme picker), the legend icons of the other themes are pre-rendered into the icon cache in small,
+  // yielding slices. That is exactly the work a switch would otherwise do right after the change (same
+  // cache keys, same static ts = 0 pose, same painters and fallbacks), and it also lets the JS engine
+  // parse/compile each theme's painter code before that theme's first animated board frame. Nothing is
+  // drawn on screen, animated board figures are still painted live every frame, and an actual switch's
+  // own icon repaint always goes first.
+  // - Idle-first where supported: requestIdleCallback slices that start an icon only while at least
+  //   WARM_MIN_IDLE_MS of idle time remains; elsewhere one icon per task after a presented frame.
+  // - Guaranteed progress: idle periods can stay shorter than WARM_MIN_IDLE_MS for good (high refresh
+  //   rates, heavy themes) and idle callbacks can be starved, so idle requests carry a timeout and,
+  //   after WARM_IDLE_MISS_LIMIT consecutive idle slices that could not start an icon (idle progress
+  //   resets the count), the chain switches to fallback mode for the rest of its life: one icon per
+  //   after-frame task, never waiting for idle again between icons (queue refreshes keep the mode; a
+  //   new chain starts idle-first again). Every slice is bounded either way, and the warm-up still
+  //   pauses (same chain, same mode) while a real switch's icon repaint is pending.
+  // - Bounded: themes are taken in picker order starting after the active one (arrow-key order) and only
+  //   as many as fit the icon LRU with room to spare, so warming never evicts the active theme's icons.
+  // - Never stale: each slice re-derives the plan (active theme, legend canvas sizes) and replaces the
+  //   remaining queue when it changed; a single chain runs at a time, later requests just let it be.
+  // - Hidden document: the rAF fallback pauses, idle callbacks keep the per-icon bound.
+  const WARM_MIN_IDLE_MS = 8;
+  const WARM_IDLE_MISS_LIMIT = 3;
+  const WARM_IDLE_TIMEOUT_MS = 1000;
+  const WARM_CACHE_HEADROOM = 32;
+  const themeWarm = { scheduled: false, queue: [], key: "", misses: 0, fallback: false };
+  function themeWarmJobs() {
+    const ids = Object.keys(SG.THEMES || {});
+    const sizes = new Map();
+    legendIconJobs().forEach(j => {
+      const w = j.cv.width, h = j.cv.height;
+      if (w && h && j.type) sizes.set(`${j.type}|${j.side}|${w}x${h}`, { type: j.type, side: j.side, w, h });
+    });
+    const perTheme = [...sizes.values()];
+    if (!perTheme.length || !ids.length) return { key: "", jobs: [] };
+    const maxThemes = Math.max(0, Math.floor((ICON_CACHE_MAX - WARM_CACHE_HEADROOM) / perTheme.length) - 1);
+    const active = currentFigureTheme().id;
+    const at = ids.indexOf(active);
+    const order = [];
+    for (let i = 1; i <= ids.length && order.length < maxThemes; i++) {
+      const id = ids[(Math.max(at, 0) + i) % ids.length];
+      if (id !== active) order.push(id);
+    }
+    const jobs = [];
+    order.forEach(themeId => perTheme.forEach(j => jobs.push({ themeId, type: j.type, side: j.side, w: j.w, h: j.h })));
+    return { key: jobs.length ? `${active}|${order.join(",")}|${[...sizes.keys()].join(",")}` : "", jobs };
+  }
+  // Replace the remaining queue when the plan changed (theme switched, legend canvases resized).
+  function refreshThemeWarmQueue() {
+    let plan;
+    try { plan = themeWarmJobs(); } catch (e) { plan = { key: "", jobs: [] }; }
+    if (plan.key !== themeWarm.key) { themeWarm.key = plan.key; themeWarm.queue = plan.jobs; }
+  }
+  function scheduleThemeWarmSlice() {
+    if (typeof requestIdleCallback === "function" && !themeWarm.fallback) {
+      requestIdleCallback(runThemeWarm, { timeout: WARM_IDLE_TIMEOUT_MS });
+    } else {
+      requestAnimationFrame(() => setTimeout(runThemeWarm, 0));
+    }
+  }
+  function runThemeWarm(deadline) {
+    const idle = !!deadline && typeof deadline.timeRemaining === "function";
+    try {
+      if (iconRepaint.pending) return;                    // a real switch is repainting: retry later
+      refreshThemeWarmQueue();
+      const start = perf.on ? perfNow() : 0;
+      let done = 0;
+      while (themeWarm.queue.length) {
+        if (idle && deadline.timeRemaining() < WARM_MIN_IDLE_MS) break;
+        const j = themeWarm.queue.shift();
+        done++;
+        if (!SG.THEMES || !hasOwn.call(SG.THEMES, j.themeId)) continue;
+        if (j.themeId === currentFigureTheme().id) continue;   // the active theme is handled by its repaint
+        try { iconImage(j.type, j.side, j.w, j.h, j.themeId); }
+        catch (err) { if (typeof console !== "undefined") console.warn("[Stygian Gambit] theme warm-up failed for", j.themeId, j.type, err); }
+        if (perf.on) perf.warmIcons++;
+        if (!idle) break;                                 // no idle deadline: one icon per task
+      }
+      // An idle slice that could not take a job is a miss; idle progress resets the count. Hitting the
+      // limit latches fallback mode for this chain (fallback slices leave the state untouched).
+      if (idle) {
+        if (!done && themeWarm.queue.length) {
+          if (++themeWarm.misses >= WARM_IDLE_MISS_LIMIT) themeWarm.fallback = true;
+        } else themeWarm.misses = 0;
+      }
+      if (perf.on) perf.warmMs += perfNow() - start;
+    } finally {
+      if (themeWarm.queue.length) scheduleThemeWarmSlice();
+      else { themeWarm.scheduled = false; themeWarm.key = ""; themeWarm.misses = 0; themeWarm.fallback = false; }
+    }
+  }
+  function requestThemeWarm() {
+    if (themeWarm.scheduled) return;                      // the running chain re-validates its plan per slice
+    themeWarm.key = ""; themeWarm.queue = []; themeWarm.misses = 0; themeWarm.fallback = false;
+    refreshThemeWarmQueue();
+    if (!themeWarm.queue.length) return;
+    themeWarm.scheduled = true;
+    scheduleThemeWarmSlice();
   }
 
   function drawSlashes(ts) {
@@ -2168,6 +2454,11 @@
   }
 
   function render(ts) {
+    // Diagnostics segments (SG.perf); a single boolean check per segment while diagnostics are off.
+    const P = perf.on;
+    const renderStart = P ? perfNow() : 0;
+    let mark = renderStart;
+    const lap = P ? key => { const now = perfNow(); perfSeg[key] += now - mark; mark = now; } : null;
     ctx.save();
     if (state.shake > 0.1 && !state.reduceMotion) ctx.translate((Math.random() - 0.5) * state.shake, (Math.random() - 0.5) * state.shake);
     if (state.zoom > 0.001) {
@@ -2179,23 +2470,31 @@
       drawTerrain(ts);
     });
     drawAmbientParticles();                       // screen space: embers always drift upward
+    if (P) lap("terrain");
     withWorld(() => {
       drawHighlights(ts);
       drawShockwaves(ts);
+      if (P) lap("fx");
       const sorted = state.pieces.slice().sort((a, b) => (a.alive ? 0 : 1) - (b.alive ? 0 : 1));
       for (const p of sorted) drawPiece(p, ts);
+      if (P) {
+        lap("pieces");
+        for (const p of sorted) if (p.alive || p.animState === "dying") perfSeg.figures++;
+      }
       if (state.scene === "planning" && state.foresightOn) drawForesight(ts);
       drawPlanGhosts(ts);
       drawSlashes(ts);
       drawProjectiles(ts);
       drawParticles();
     });
+    if (P) lap("fx");
     // Screen layer — text and markers stay upright and on-canvas.
     drawPieceMarkers();
     drawPlanBadges();
     drawDamageNumbers();
     drawImpactFlash();
     ctx.restore();
+    if (P) { lap("screen"); perfSeg.render += mark - renderStart; }
   }
 
   /* ============================================================
@@ -2676,6 +2975,11 @@
       if (existing) {                                           // repaint so a theme switch shows here too
         const tp = existing.dataset.piece;
         if (tp) paintIcon(existing, tp, tp === "fury" ? "neutral" : "light");
+        const label = li.querySelector(".role-name-label");
+        if (label) {
+          const entry = SG.ROLE_NAMES && SG.ROLE_NAMES[activeThemeId] && SG.ROLE_NAMES[activeThemeId][tp];
+          label.textContent = entry ? (entry[(SG.I18N && SG.I18N.lang) || "en"] || entry.en || entry.zh) : tp;
+        }
         return;
       }
       const name = ((li.querySelector("b") || {}).textContent || "").trim();
@@ -2684,11 +2988,19 @@
       const text = document.createElement("span");
       text.className = "role-text";
       while (li.firstChild) text.appendChild(li.firstChild);   // keep the line as one block beside the icon
+      const caption = document.createElement("span");
+      caption.className = "icon-caption";
+      caption.dataset.piece = type;
       const cv = document.createElement("canvas");
       cv.width = 52; cv.height = 52; cv.className = "role-icon";
       cv.dataset.piece = type;
       paintIcon(cv, type, type === "fury" ? "neutral" : "light");
-      li.append(cv, text);
+      const label = document.createElement("span");
+      label.className = "role-name-label";
+      const entry = SG.ROLE_NAMES && SG.ROLE_NAMES[activeThemeId] && SG.ROLE_NAMES[activeThemeId][type];
+      label.textContent = entry ? (entry[(SG.I18N && SG.I18N.lang) || "en"] || entry.en || entry.zh) : type;
+      caption.append(cv, label);
+      li.append(caption, text);
     });
   }
   function openHelp() { decorateHelpRoles(); dom.helpScreen.classList.remove("hidden"); }
@@ -2787,13 +3099,28 @@
   // animation frame, and legend / help role icons repaint in deferred, yielding slices afterwards
   // (see scheduleIconRepaint) so a theme switch never blocks input feedback.
   function setTheme(id, persist = true) {
+    const perfStart = perf.on ? perfNow() : 0;
+    const from = perf.on ? currentFigureTheme().id : null;
     activeThemeId = normalizeThemeId(id);
+    refreshRoleNameLabels();
     if (state) state.theme = activeThemeId;
     if (persist) { try { localStorage.setItem(THEME_STORAGE_KEY, activeThemeId); } catch (e) { /* storage blocked */ } }
     syncThemeSelects();
     scheduleIconRepaint();
+    if (perf.on) {
+      if (perf.switchRec) perfFinishSwitch();             // log the interrupted one with what it saw
+      perf.switchRec = {
+        from, to: activeThemeId, at: perfStart, handlerMs: perfNow() - perfStart,
+        frames: 0, firstFrameMs: null, firstRenderMs: null, firstInterval: null,
+        maxInterval: 0, longFrames: 0, maxRender: 0, iconMs0: perf.iconMs, iconSlices0: perf.iconSlices,
+      };
+    }
   }
-  themeSelects().forEach(sel => sel.addEventListener("change", e => setTheme(e.target.value)));
+  themeSelects().forEach(sel => {
+    sel.addEventListener("change", e => setTheme(e.target.value));
+    // Intent to change skin: pre-render the other themes' icons while the player is still choosing.
+    ["pointerenter", "focus", "pointerdown"].forEach(type => sel.addEventListener(type, requestThemeWarm));
+  });
 
   /* ---- Descent + Mirror UI ---- */
   const MIRROR_UPG = {
@@ -3061,18 +3388,23 @@
 
   let lastAmbientTs = performance.now();
   function loop(ts) {
+    const P = perf.on;
+    const updateStart = P ? perfNow() : 0;
     const adt = Math.min((ts - lastAmbientTs) / 1000 || 0, 0.05);
     lastAmbientTs = ts;
     updateAmbientParticles(adt);
     if (state.scene === "battle" || state.scene === "planning") update(ts);
     else state.lastTs = ts;
+    if (P) perfSeg.update += perfNow() - updateStart;
     render(ts);
+    if (P && perf.on) perfRecordFrame(ts, currentFigureTheme().id);
     requestAnimationFrame(loop);
   }
 
   // Language switch (fired by i18n.js): redraw every piece of dynamic text currently on screen.
   // Past event-log lines keep the language they were written in.
   function refreshLanguage() {
+    refreshRoleNameLabels();
     if (!state) return;
     buildThemeOptions();
     dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");

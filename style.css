@@ -93,7 +93,25 @@ html, body {
   font-size: 0.86em;
   line-height: 1.35;
 }
-.legend-item { display: flex; gap: 10px; align-items: center; }
+.legend-item { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.icon-caption {
+  display: flex;
+  flex: 0 0 62px;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.role-name-label {
+  display: block;
+  width: 100%;
+  font-size: 0.68em;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+  text-align: center;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
 .legend-icon {
   flex: 0 0 46px;
   width: 46px;
@@ -139,10 +157,9 @@ html, body {
 .help-roles { margin: 4px 0 8px; padding-inline-start: 18px; }
 .help-roles li { margin-bottom: 4px; }
 .help-roles.with-icons { list-style: none; padding-inline-start: 0; }
-.help-roles.with-icons li { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.help-roles.with-icons li { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; min-width: 0; }
 .role-icon { flex: 0 0 46px; width: 46px; height: 46px; }
 .role-text { flex: 1; min-width: 0; }
-
 .hall-record { margin-top: 14px; font-size: 0.76em; color: #b6a9c6; }
 .hall-record b { color: var(--gold); }
 

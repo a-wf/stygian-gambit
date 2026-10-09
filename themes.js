@@ -19,12 +19,28 @@
 
   const INK = "#0b0710";
 
-  function rgba(hex, a) {
+  // Painters call rgba() many times per figure per frame, mostly with a handful of palette colours and
+  // animated alphas, so the hex → "r,g,b" parse is memoised (pure function, bounded map; output identical).
+  const RGB_MEMO_MAX = 512;
+  const rgbMemo = new Map();
+  function rgbTriplet(hex) {
+    const memoKey = typeof hex === "string" ? hex : null;
+    if (memoKey !== null) {
+      const hit = rgbMemo.get(memoKey);
+      if (hit !== undefined) return hit;
+    }
     let h = String(hex || "#ffffff").replace("#", "");
     if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
     const n = parseInt(h.slice(0, 6), 16);
-    if (isNaN(n)) return `rgba(255,255,255,${a})`;
-    return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+    const rgb = isNaN(n) ? "255,255,255" : `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+    if (memoKey !== null) {
+      if (rgbMemo.size >= RGB_MEMO_MAX) rgbMemo.clear();
+      rgbMemo.set(memoKey, rgb);
+    }
+    return rgb;
+  }
+  function rgba(hex, a) {
+    return `rgba(${rgbTriplet(hex)},${a})`;
   }
 
   /* ============================================================
@@ -35,8 +51,18 @@
     const time = ts || 0;
     c.lineJoin = "round"; c.lineCap = "round";
 
-    const bodyGrad = c.createLinearGradient(-r, -r * 1.2, r, r * 1.2);
-    bodyGrad.addColorStop(0, pal.bright); bodyGrad.addColorStop(0.55, pal.mid); bodyGrad.addColorStop(1, pal.deep);
+    // The shared body gradient is created on first use only: many painters never touch it, and this
+    // factory runs for every figure on every frame. A gradient is resolved in the user space current at
+    // fill time, so creating it later (from the same c/pal/r, and no built-in painter reassigns pal's
+    // colours) paints identically.
+    let bodyGrad = null;
+    function getBodyGrad() {
+      if (bodyGrad === null) {
+        bodyGrad = c.createLinearGradient(-r, -r * 1.2, r, r * 1.2);
+        bodyGrad.addColorStop(0, pal.bright); bodyGrad.addColorStop(0.55, pal.mid); bodyGrad.addColorStop(1, pal.deep);
+      }
+      return bodyGrad;
+    }
 
     function ink(w) { c.strokeStyle = ink0; c.lineWidth = w || 2.4; c.stroke(); }
     function fillInk(style, w) { c.fillStyle = style; c.fill(); ink(w); }
@@ -45,7 +71,8 @@
       c.beginPath(); c.arc(cx - rad * 0.3, cy - rad * 0.3, rad * 0.28, 0, Math.PI * 2);
       c.fillStyle = "rgba(255,255,255,0.45)"; c.fill();
     }
-    function robe(topW, botW, topY, botY, grad = bodyGrad) {
+    function robe(topW, botW, topY, botY, grad) {
+      if (grad === undefined) grad = getBodyGrad();
       c.beginPath(); c.moveTo(-topW, topY);
       c.quadraticCurveTo(-botW * 1.08, (topY + botY) / 2, -botW, botY);
       c.lineTo(botW, botY);
@@ -103,7 +130,13 @@
       for (let i = 2; i < pts.length; i += 2) c.lineTo(pts[i] * r, pts[i + 1] * r);
       c.closePath();
     }
-    return { INK: ink0, bodyGrad, ink, fillInk, head, robe, rr, eyes, energyBlade, glowOrb, pulse, metal, poly, rgba };
+    return {
+      INK: ink0,
+      // Lazy accessor; assigning h.bodyGrad replaces it with a plain value (robe() keeps its own default).
+      get bodyGrad() { return getBodyGrad(); },
+      set bodyGrad(value) { Object.defineProperty(this, "bodyGrad", { value, writable: true, enumerable: true, configurable: true }); },
+      ink, fillInk, head, robe, rr, eyes, energyBlade, glowOrb, pulse, metal, poly, rgba,
+    };
   };
 
   /* ============================================================

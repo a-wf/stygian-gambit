@@ -53,3 +53,6 @@ python3 -m http.server 8420
 ```
 
 then visit http://localhost:8420.
+
+### Render diagnostics (developers)
+Opt-in only; off by default, with no extra timing or logging while off. Add `?sgperf=1` to the URL, set `localStorage["sg.perf"] = "1"`, or run `SG.perf.enable()` (`SG.perf.enable(true)` also persists the flag) in the browser console. Each skin switch then logs one `[Stygian Gambit perf] theme switch` summary (handler time, switch-to-first-frame time, first render time, worst frame interval and hitches over the next 60 frames, icon repaint time). `SG.perf.report()` prints and returns per-theme stats (average/p95/max frame interval, hitches over 25 ms, and average update/render/terrain/pieces/effects/screen times). `SG.perf.reset()` clears them and `SG.perf.disable(true)` turns diagnostics off and clears the persisted flag. Segment times are main-thread canvas-command time; GPU rasterisation only shows up in the frame-interval figures.
