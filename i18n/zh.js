@@ -27,11 +27,12 @@ window.SG.I18N_DICT.zh = {
   "legend.trickster": "<b>诡术师</b>——即象：沿对角线滑行任意距离，并攻击整条对角线。",
   "legend.wildrider": "<b>狂骑</b>——以马步越过任何阻挡；斩杀相邻的敌人。",
   "legend.skirmisher": "<b>散兵</b>——向前迈步，在前方斜线上击杀。",
-  "legend.harrower": "<b>掠魂者</b>——瞬移至任意友军身旁；其击杀还会拖垮受害者身旁的一名敌人。",
+  "legend.harrower": "<b>掠魂者</b>——瞬移至任意友军身旁；若开启选项，其击杀还会拖垮受害者身旁的一名敌人。",
   "legend.fury": "<b>复仇女神</b>——可选的中立恐怖之物。游荡于棋盘之上，斩杀离它最近者，不分阵营。",
   "start.rules1": "<b>每回合分为两个阶段。</b>在<b>谋略</b>阶段，你秘密指挥至多<b>3枚棋子</b>（移动或攻击），按你希望的顺序行动，并可消耗一面<b>神盾</b>为一枚棋子抵挡一次致命一击（数量有限）。点击确认以锁定计划。在<b>战斗</b>阶段，双方计划交替上演——你的第1步、对方的第1步、你的第2步、对方的第2步……而谁先结算每回合轮换。若攻击目标已经溜走，这一击只会击中虚影。",
   "start.rules2": "你每完成一次击杀可获得<b>10晶石</b>。在谋略阶段消耗晶石，即可在你半场的任意空格<b>召唤援军</b>：散兵<b>20</b>，巨像、狂骑或诡术师<b>30</b>，掠魂者<b>40</b>。",
   "start.furies": "释放<b>复仇女神</b>——游荡棋盘、不分敌我皆会斩杀的中立恐怖之物",
+  "start.harrowerDrag": "<b>掠魂者</b>能力——其击杀还会拖垮受害者身旁的一名敌人",
   "start.hazards": "唤醒<b>冥河险境</b>——熔岩、裂谷&amp;魂泉将重塑棋盘",
   "start.movesPerRound": "每轮行动数",
   "start.difficulty": "难度",
@@ -136,7 +137,7 @@ window.SG.I18N_DICT.zh = {
   "summon.desc.juggernaut": "沿直线刺穿任意敌人。",
   "summon.desc.wildrider": "以马步越过阻挡；斩杀相邻的敌人。",
   "summon.desc.trickster": "沿对角线滑行任意距离，并攻击整条对角线。",
-  "summon.desc.harrower": "瞬移至友军身旁；其击杀还会拖垮第二名敌人。",
+  "summon.desc.harrower": "瞬移至友军身旁；若开启选项，其击杀还会拖垮第二名敌人。",
   "reaper.title": "收割者之击",
   "reaper.sub": "目标：<b>{target}</b>。友军永不受伤。",
   "reaper.spiral": "收割旋风",
@@ -226,6 +227,7 @@ window.SG.I18N_DICT.zh = {
   "online.title": "联机对决",
   "online.subtitle": "在两台电脑上实时进行同一场对局。",
   "online.furies": "释放<b>复仇女神</b>",
+  "online.harrowerDrag": "<b>掠魂者</b>连带拖垮",
   "online.create": "创建房间",
   "online.createNote": "你将获得一个可分享的代码。你执<b>幽影</b>（房主）。",
   "online.or": "——或——",
@@ -277,6 +279,33 @@ window.SG.I18N_DICT.zh = {
   "options.mute": "静音",
   "options.reduceMotion": "减少动态效果（无震屏、闪光或缩放）",
   "options.glyphs": "色盲阵营标记（▲ 幽影 / ▽ 余烬）",
+
+  /* ---- piece themes ---- */
+  "themeLabel": "棋子主题",
+  "theme.classic.name": "经典冥界",
+  "theme.classic.desc": "手绘墨线勾勒的冥界幽影。",
+  "theme.galactic.name": "星际先锋",
+  "theme.galactic.desc": "等离子光刃、重甲猎手与反重力无人机，来自遥远的星系。",
+  "theme.superhero.name": "超能军团",
+  "theme.superhero.desc": "动力战甲、星铸坚盾、秘术光轮与雷霆战锤的传奇英雄。",
+  "theme.justice.name": "义警与典范",
+  "theme.justice.desc": "太阳披风、暗影头罩、潮汐三叉戟与硬光造物——一支原创的英雄联盟。",
+  "theme.shinobi.name": "忍界宗族",
+  "theme.shinobi.desc": "查克拉大师、瞳术秘仪、砂之壁垒与灵兽外衣的隐村忍者。",
+  "theme.spiritcourt.name": "灵廷幽冥武士",
+  "theme.spiritcourt.desc": "幽冥灵廷各席统领、觉醒魂灵秘刃、万樱花刃风暴、炽阳烈焰与异面狂战。",
+  "theme.piratecrew.name": "公海豪杰海盗团",
+  "theme.piratecrew.desc": "豪气海盗船长、三绝刃剑豪、烈焰踢技厨师、风暴航海士与可化身巨兽的驯鹿萌医，扬帆驰骋于辽阔公海。",
+  "theme.wonderkingdom.name": "奇迹王国与群星勇士",
+  "theme.wonderkingdom.desc": "闪耀无敌星的工装水管英雄、持吸尘器的捉鬼猎人、擎木桶护盾的丛林巨猿、跃动电光的雷光灵鼠与战甲赏金猎人，共同守护奇迹王国。",
+  "theme.olympian.name": "奥林匹斯诸神",
+  "theme.olympian.desc": "执掌雷霆的宙斯、冥影加冕的哈迪斯、披戴涅墨亚雄狮的赫拉克勒斯、足踏飞翼的赫尔墨斯、驾驭海马的波塞冬、手持神盾的雅典娜、光耀如日的阿波罗与血铜战甲的阿瑞斯——奥林匹斯众神降临棋盘。",
+  "theme.pharaonic.name": "法老神系",
+  "theme.pharaonic.desc": "头顶曜日的拉神、胡狼首阿努比斯、巨鳄索贝克、鹮首智慧之神托特、巡天神隼荷鲁斯、金字塔麦杰守卫、烈日雌狮塞赫麦特与狂砂风暴之神塞特——尼罗河众神降临掌控命运之砂。",
+  "theme.celestial.name": "天界仙魔",
+  "theme.celestial.desc": "取材自古代中国神话与西游封神：千叶宝莲上手持九环锡杖与如意宝珠的地藏菩萨、驾筋斗云的齐天大圣、牛角魔盔的牛魔王、三目神光的二郎神、脚踏风火轮的哪吒、天兵天将、射日神弓后羿，以及挥动芭蕉扇卷起狂风的铁扇公主。",
+  "theme.hyakki.name": "百鬼夜行",
+  "theme.hyakki.desc": "取材自日本经典妖怪物语与百鬼夜行：头生赤纹双角、手持金色酒盏与巨型鬼葫芦的酒吞童子；身披破烂羽织、挥舞双刃的白发诅咒剑士鬼切；唤起缠绕雷电之地狱鬼手的茨木童子；头戴兜巾、手执三羽团扇的黑翼大天狗；双足直立、耳燃烈焰、手持地狱火镰、自尖刺火轮车上跃出的火车猫妖；戴面罩、挥舞四刃风镰的镰鼬三兄弟；神弓白狼，以及冰晶雪舞的绝美雪女。",
 
   /* ---- trials & daily ---- */
   "trials.title": "冥界试炼",
@@ -342,7 +371,7 @@ window.SG.I18N_DICT.zh = {
   <li><b>诡术师</b>（Trickster，象）——沿对角线移动任意距离，并攻击整条对角线（直至第一个障碍）。</li>
   <li><b>狂骑</b>（Wildrider，马）——越过障碍的L形跳跃。</li>
   <li><b>散兵</b>（Skirmisher，兵）——向前迈一格，在前方斜线上攻击。</li>
-  <li><b>掠魂者</b>（Harrower）——瞬移至任意友军身旁；其击杀还会拖垮受害者身旁的一名敌人。</li>
+  <li><b>掠魂者</b>——瞬移至任意友军身旁（连带拖垮可选）。</li>
   <li><b>复仇女神</b>（Fury，可选）——中立的恐怖之物，追猎并斩杀离它最近的棋子，不分阵营。</li>
 </ul>
 

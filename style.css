@@ -214,6 +214,9 @@ html, body {
 }
 .fury-option input { accent-color: var(--fury); width: 15px; height: 15px; cursor: pointer; }
 .fury-option b { color: var(--fury); }
+.harrower-option { color: #4fd6c4; }
+.harrower-option input { accent-color: #4fd6c4; }
+.harrower-option b { color: #4fd6c4; }
 
 .btn {
   font-family: inherit;
@@ -490,6 +493,20 @@ html, body {
   border: 1px solid var(--panel-border); border-radius: 5px; padding: 3px 6px; cursor: pointer;
 }
 .opt-row .lang-select { flex: 0 0 auto; }
+
+/* ---------- Piece theme picker ---------- */
+.theme-select,
+.bot-options select.theme-select {
+  font-family: inherit; font-size: 0.95em;
+  background: linear-gradient(180deg, #2a1f38, #1a1324); color: var(--bone);
+  border: 1px solid var(--panel-border); border-radius: 5px; padding: 4px 8px; cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(47,198,214,0.12);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.theme-select:hover { border-color: var(--gold); box-shadow: inset 0 0 0 1px rgba(47,198,214,0.25), 0 0 8px rgba(232,198,87,0.25); }
+.theme-select:focus-visible { outline: none; border-color: var(--umbra); box-shadow: 0 0 0 2px rgba(47,198,214,0.45), 0 0 10px rgba(47,198,214,0.3); }
+.theme-select option { background: #1a1324; color: var(--bone); }
+.opt-row .theme-select { flex: 0 0 auto; min-width: 11em; }
 /* Arabic letters must join: tracking breaks the script, so drop all letter-spacing. */
 html[lang="ar"] *, html[lang="ar"] *::before { letter-spacing: 0 !important; }
 html[lang="ar"] body { line-height: 1.6; }

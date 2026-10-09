@@ -50,7 +50,7 @@
       roomRef = db.ref("rooms/" + code);
       resolvedUpTo = -1; started = false;
       roomRef.set({
-        config: { furies: !!(opts && opts.furies), firstSide: "light", createdAt: Date.now() },
+        config: { furies: !!(opts && opts.furies), harrowerDrag: !!(opts && opts.harrowerDrag), firstSide: "light", createdAt: Date.now() },
         host: { present: true },
         status: "waiting",
       }).then(() => {

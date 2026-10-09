@@ -26,11 +26,12 @@ window.SG.I18N_DICT.fr = {
   "legend.trickster": "<b>Trickster</b> — le fou : glisse de n'importe quelle distance en diagonale et frappe toute la diagonale.",
   "legend.wildrider": "<b>Wildrider</b> — saut du cavalier par-dessus tout obstacle ; tue un ennemi adjacent.",
   "legend.skirmisher": "<b>Skirmisher</b> — avance d'une case, tue sur les diagonales avant.",
-  "legend.harrower": "<b>Harrower</b> — se téléporte à côté de n'importe quel allié ; quand il tue, il entraîne aussi un ennemi voisin de la victime.",
+  "legend.harrower": "<b>Harrower</b> — se téléporte à côté de n'importe quel allié ; si l'option est activée, son coup mortel entraîne aussi un ennemi voisin de la victime.",
   "legend.fury": "<b>Fury</b> — horreur neutre facultative. Rôde sur le plateau et tue la pièce la plus proche, quel que soit son camp.",
   "start.rules1": "<b>Chaque round compte deux phases.</b> En <b>Stratégie</b>, tu commandes en secret jusqu'à <b>3 pièces</b> (Déplacer ou Frapper), dans l'ordre où tu veux qu'elles agissent, et tu peux dépenser un <b>Aegis</b> pour protéger une pièce d'un coup mortel (réserve limitée). Clique sur Valider pour verrouiller ton plan. En <b>Bataille</b>, les deux plans se jouent en alternance — ton 1er ordre, son 1er, ton 2e, son 2e… et le camp qui agit en premier change à chaque round. Une frappe dont la cible s'est dérobée ne touche que l'ombre.",
   "start.rules2": "Chaque ennemi que tu abats te rapporte <b>10 cristaux</b>. Dépense-les en phase de Stratégie pour <b>invoquer des renforts</b> sur n'importe quelle case vide de ta moitié du plateau : <b>20</b> pour un Skirmisher, <b>30</b> pour un Juggernaut, un Wildrider ou un Trickster, <b>40</b> pour un Harrower.",
   "start.furies": "Libère les <b>Furies</b> — horreurs neutres qui rôdent sur le plateau et tuent dans les deux camps",
+  "start.harrowerDrag": "Capacité <b>Harrower</b> — il entraîne aussi un ennemi voisin de la victime",
   "start.hazards": "Réveille les <b>Styx Hazards</b> — lave, gouffres &amp; fontaines d'âmes qui remodèlent le plateau",
   "start.movesPerRound": "Coups par manche",
   "start.difficulty": "Difficulté",
@@ -135,7 +136,7 @@ window.SG.I18N_DICT.fr = {
   "summon.desc.juggernaut": "Transperce n'importe quel ennemi en ligne droite.",
   "summon.desc.wildrider": "Saut du cavalier par-dessus les obstacles ; tue un ennemi adjacent.",
   "summon.desc.trickster": "Glisse de n'importe quelle distance en diagonale et frappe tout du long.",
-  "summon.desc.harrower": "Se téléporte à côté d'un allié ; quand il tue, il entraîne un second ennemi.",
+  "summon.desc.harrower": "Se téléporte à côté d'un allié ; si l'option est active, son coup mortel entraîne un second ennemi.",
   "reaper.title": "La frappe de la Reaper",
   "reaper.sub": "Cible : <b>{target}</b>. Tes alliés ne sont jamais touchés.",
   "reaper.spiral": "Spirale faucheuse",
@@ -225,6 +226,7 @@ window.SG.I18N_DICT.fr = {
   "online.title": "DUEL EN LIGNE",
   "online.subtitle": "Joue la même partie en direct sur deux ordinateurs.",
   "online.furies": "Libère les <b>Furies</b>",
+  "online.harrowerDrag": "Entraînement collatéral du <b>Harrower</b>",
   "online.create": "Créer une salle",
   "online.createNote": "Tu obtiendras un code à partager. Tu joues <b>Umbra</b> (hôte).",
   "online.or": "— ou —",
@@ -276,6 +278,33 @@ window.SG.I18N_DICT.fr = {
   "options.mute": "Couper le son",
   "options.reduceMotion": "Réduire les animations (sans tremblement, flash ni zoom)",
   "options.glyphs": "Glyphes daltoniens des camps (▲ Umbra / ▽ Ember)",
+
+  /* ---- piece themes ---- */
+  "themeLabel": "Thème des Pièces",
+  "theme.classic.name": "Monde Souterrain Classique",
+  "theme.classic.desc": "Ombres des Enfers peintes et cernées d'encre.",
+  "theme.galactic.name": "Avant-garde Galactique",
+  "theme.galactic.desc": "Lames de plasma, chasseurs en armure et drones à répulseurs d'une galaxie lointaine.",
+  "theme.superhero.name": "Légion Surhumaine",
+  "theme.superhero.desc": "Armures assistées, boucliers forgés aux étoiles, mandalas mystiques et marteaux de foudre de champions légendaires.",
+  "theme.justice.name": "Justiciers & Parangons",
+  "theme.justice.desc": "Capes solaires, capuches d'ombre, tridents des marées et constructions de lumière solide d'une ligue originale de parangons.",
+  "theme.shinobi.name": "Clans Shinobi",
+  "theme.shinobi.desc": "Maîtres du chakra, jutsu oculaires, barrières de sable et manteaux de bêtes spirituelles des villages ninjas cachés.",
+  "theme.spiritcourt.name": "Faucheurs de la Cour des Esprits",
+  "theme.spiritcourt.desc": "Seigneurs de la cour des esprits, lames spirituelles éveillées, tempêtes de pétales, brasiers solaires et guerriers masqués.",
+  "theme.piratecrew.name": "Bouccaniers de la Haute Mer",
+  "theme.piratecrew.desc": "Capitaines corsaires épris de liberté, maîtres aux trois lames, chefs aux jambes ardentes, navigatrices des tempêtes et médecins rennes à forme monstrueuse, voguant sur la haute mer.",
+  "theme.wonderkingdom.name": "Royaume des Merveilles & Champions Étoilés",
+  "theme.wonderkingdom.desc": "Plombiers héroïques aux étoiles d'invincibilité, chasseurs de spectres à aspirateur, primates de la jungle aux boucliers tonneaux, rongeurs électriques et chasseurs de primes en armure défendant le royaume.",
+  "theme.olympian.name": "Panthéon Olympien",
+  "theme.olympian.desc": "Zeus maître de la foudre, Hadès couronné d'ombre, Héraclès coiffé du lion de Némée, Hermès aux sandales ailées, Poséidon chevauchant son hippocampe, Athéna porteuse de l'Égide, Apollon solaire et Arès au bronze ensanglanté — les dieux de l'Olympe descendent sur l'échiquier.",
+  "theme.pharaonic.name": "Panthéon Pharaonique",
+  "theme.pharaonic.desc": "Râ au disque solaire, Anubis à tête de chacal, Sobek le crocodile primordial, Thot l'ibis de la sagesse, Horus le faucon céleste, les gardes medjaÿ des pyramides, Sekhmet la lionne solaire et Seth seigneur des tempêtes — les divinités du Nil régissent les sables du destin.",
+  "theme.celestial.name": "Royaume Céleste",
+  "theme.celestial.desc": "Panthéon des mythes célestes de la Chine antique : le bodhisattva Ksitigarbha sur son lotus aux mille pétales, armé du bâton aux neuf anneaux et du joyau qui exauce les vœux, le Roi Singe sur son nuage-culbute, le Roi Démon Taureau cornu, Erlang Shen aux trois yeux, Nezha sur ses roues de vent et de feu, les hallebardiers célestes, Hou Yi l'archer qui abattit les soleils et le cyclone de la Princesse à l'Éventail de Fer.",
+  "theme.hyakki.name": "Cortège des Démons",
+  "theme.hyakki.desc": "Légende des yokai du folklore japonais : Shuten-dōji, roi démon du mont Ōe, aux cornes cerclées d'écarlate, avec sa coupe de saké dorée et sa calebasse démoniaque géante ; Onikiri, l'épéiste maudit aux cheveux blancs, fendant l'air de ses deux katanas en haori déchiré ; Ibaraki-dōji et sa Main infernale spectrale crépitant d'éclairs ; le Daitengu aux ailes de corbeau, coiffé du tokin, et son éventail de tempête à trois plumes ; Kasha, chat-démon bipède aux oreilles enflammées armé d'une faux infernale, bondissant de son char ardent aux roues hérissées de pointes ; le trio Kamaitachi, trois frères belettes ninjas masqués aux faucilles de vent à quatre lames ; la noble archère louve Hakuro et Yuki Onna, la dame des neiges.",
 
   /* ---- trials & daily ---- */
   "trials.title": "ÉPREUVES DES ENFERS",
@@ -341,7 +370,7 @@ window.SG.I18N_DICT.fr = {
   <li><b>Trickster</b> (fou) — se déplace de n'importe quelle distance en diagonale et frappe toute la diagonale (jusqu'au premier obstacle).</li>
   <li><b>Wildrider</b> (cavalier) — saut en L par-dessus les obstacles.</li>
   <li><b>Skirmisher</b> (pion) — avance d'une case, frappe sur les diagonales avant.</li>
-  <li><b>Harrower</b> — se téléporte à côté de n'importe quel allié ; quand il tue, il entraîne aussi un ennemi voisin de la victime.</li>
+  <li><b>Harrower</b> — se téléporte à côté de n'importe quel allié (entraînement collatéral optionnel).</li>
   <li><b>Fury</b> (facultative) — une horreur neutre qui traque et tue la pièce la plus proche, quel que soit son camp.</li>
 </ul>
 

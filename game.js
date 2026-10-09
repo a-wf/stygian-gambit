@@ -95,6 +95,16 @@
    * ============================================================ */
   let state = null;
   let nextPieceId = 1;
+
+  /* ---- Visual piece theme (themes.js registers SG.THEMES) ---- */
+  const THEME_STORAGE_KEY = "stygian_theme";
+  function readThemePreference() {
+    try { return localStorage.getItem(THEME_STORAGE_KEY); } catch (e) { return null; } // storage blocked
+  }
+  function normalizeThemeId(id) {
+    return id && SG.THEMES && Object.prototype.hasOwnProperty.call(SG.THEMES, id) ? id : "classic";
+  }
+  let activeThemeId = normalizeThemeId(readThemePreference());
   let onlineRoundSnap = null;   // identical round-start board both clients rewind to
   let onlineRoundIds = null;    // ids present at round start (summons this round can't be commanded)
 
@@ -110,6 +120,7 @@
     return {
       scene: "start",           // start | planning | handoff | battle | gameover
       mode: "hotseat",
+      theme: activeThemeId,     // visual piece theme (cosmetic only)
       humanSide: "light",
       movesPerRound: 3,
       pieces: [],
@@ -124,6 +135,7 @@
       wardMode: false,
       summonArmed: null,
       furiesEnabled: false,
+      harrowerDragEnabled: false,
       furyCount: 0,
       pendingReaperStrike: null,
       selection: { pieceId: null, moveTiles: [], strikeTiles: [] },
@@ -906,7 +918,7 @@
     }
 
     // Harrower drags down a foe beside the victim.
-    if (defs.strikeChain && !target.alive) {
+    if (defs.strikeChain && state.harrowerDragEnabled && !target.alive) {
       const g2 = buildOccupancyGrid(state.pieces);
       for (const [dr, dc] of ROOK_DIRS) {
         const r = tRow + dr, c = tCol + dc;
@@ -1155,6 +1167,7 @@
     state.mode = "online";
     state.humanSide = mySide;
     state.furiesEnabled = !!config.furies;
+    state.harrowerDragEnabled = !!config.harrowerDrag;
     state.hazardsEnabled = false;                 // terrain RNG would desync clients
     state.terrain = null;
     const o = loadStore("sg.options", {});
@@ -1676,7 +1689,7 @@
             else {
               const tRow = target.row, tCol = target.col;
               predKill(target, forecast);
-              if (defs.strikeChain && !target.alive) { const g2 = buildOccupancyGrid(clones); for (const [dr, dc] of ROOK_DIRS) { const r = tRow + dr, c = tCol + dc; if (!inBounds(r, c)) continue; const o = g2[r][c]; if (o && o.alive && o.side !== p.side) { predKill(o, forecast); break; } } }
+              if (defs.strikeChain && state.harrowerDragEnabled && !target.alive) { const g2 = buildOccupancyGrid(clones); for (const [dr, dc] of ROOK_DIRS) { const r = tRow + dr, c = tCol + dc; if (!inBounds(r, c)) continue; const o = g2[r][c]; if (o && o.alive && o.side !== p.side) { predKill(o, forecast); break; } } }
               if (!target.alive) { const g2 = buildOccupancyGrid(clones); if (!g2[tRow][tCol]) { p.row = tRow; p.col = tCol; forecast.captures.push({ id: p.id, row: tRow, col: tCol }); } }
             }
           }
@@ -1768,8 +1781,6 @@
     ctx.textBaseline = "alphabetic";
   }
 
-  const INK = "#0b0710";
-  const FACE = "#ecd6bf";
   function glyphColor(side) {
     return side === "light" ? { fill: "#8ff2f5", glow: "#2fc6d6" } :
            side === "dark" ? { fill: "#ffc9b2", glow: "#ff5a48" } :
@@ -1896,98 +1907,77 @@
     }
   }
 
-  // Painted, ink-outlined figures (unchanged Hades-style art).
+  // Figures are drawn by the active visual theme (themes.js). Missing or broken painters fall back to
+  // classic, and if themes.js is unavailable entirely a self-contained glowing disc is drawn instead.
+  const failedPainters = new Set();
+  const FALLBACK_INITIALS = { sovereign: "S", reaper: "R", juggernaut: "J", trickster: "T", wildrider: "W", skirmisher: "K", harrower: "H", fury: "F" };
+
+  // Run a painter with save/restore depth tracking so a throw mid-draw (with nested c.save() calls
+  // still open) unwinds the canvas exactly back to the baseline instead of leaking transforms/styles.
+  function runPainter(painter, c, pal, r, ts) {
+    const hadOwnSave = Object.prototype.hasOwnProperty.call(c, "save");
+    const hadOwnRestore = Object.prototype.hasOwnProperty.call(c, "restore");
+    const ownSave = c.save, ownRestore = c.restore;
+    let depth = 0;
+    c.save = function () { depth++; return ownSave.call(c); };
+    c.restore = function () { if (depth > 0) { depth--; return ownRestore.call(c); } }; // never pop below baseline
+    try {
+      const helpers = typeof SG.createFigureHelpers === "function" ? SG.createFigureHelpers(c, pal, r, ts) : {};
+      painter(c, pal, r, ts, helpers);
+    } finally {
+      while (depth > 0) { depth--; ownRestore.call(c); }
+      if (hadOwnSave) c.save = ownSave; else delete c.save;
+      if (hadOwnRestore) c.restore = ownRestore; else delete c.restore;
+    }
+  }
+
+  function paintFallbackFigure(c, type, pal, r) {
+    const g = c.createRadialGradient(0, -r * 0.25, r * 0.1, 0, 0, r);
+    g.addColorStop(0, pal.rim || "#ffffff");
+    g.addColorStop(0.45, pal.bright || "#cccccc");
+    g.addColorStop(1, pal.deep || "#222222");
+    c.shadowColor = pal.bright || "#ffffff"; c.shadowBlur = r * 0.6;
+    c.fillStyle = g;
+    c.beginPath(); c.arc(0, 0, r * 0.82, 0, Math.PI * 2); c.fill();
+    c.shadowBlur = 0;
+    c.lineWidth = Math.max(1, r * 0.08); c.strokeStyle = pal.gold || "#e8c657"; c.stroke();
+    const letter = FALLBACK_INITIALS[type] || (type ? String(type).charAt(0).toUpperCase() : "?");
+    c.fillStyle = pal.deep || "#000000";
+    c.font = `bold ${Math.round(r * 0.9)}px serif`;
+    c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillText(letter, 0, r * 0.05);
+  }
+
   function paintFigure(type, pal, r, ts, c) {
     c = c || ctx;
-    c.lineJoin = "round"; c.lineCap = "round";
-    const bodyGrad = c.createLinearGradient(-r, -r * 1.2, r, r * 1.2);
-    bodyGrad.addColorStop(0, pal.bright); bodyGrad.addColorStop(0.55, pal.mid); bodyGrad.addColorStop(1, pal.deep);
-    function ink(w) { c.strokeStyle = INK; c.lineWidth = w || 2.4; c.stroke(); }
-    function fillInk(style, w) { c.fillStyle = style; c.fill(); ink(w); }
-    function head(cx, cy, rad) { c.beginPath(); c.arc(cx, cy, rad, 0, Math.PI * 2); fillInk(FACE, 2.1); c.beginPath(); c.arc(cx - rad * 0.3, cy - rad * 0.3, rad * 0.28, 0, Math.PI * 2); c.fillStyle = "rgba(255,255,255,0.45)"; c.fill(); }
-    function robe(topW, botW, topY, botY) { c.beginPath(); c.moveTo(-topW, topY); c.quadraticCurveTo(-botW * 1.08, (topY + botY) / 2, -botW, botY); c.lineTo(botW, botY); c.quadraticCurveTo(botW * 1.08, (topY + botY) / 2, topW, topY); c.closePath(); fillInk(bodyGrad, 2.6); }
-    function eyes(cx, cy, dx, rad, color) { c.fillStyle = color; c.beginPath(); c.arc(cx - dx, cy, rad, 0, Math.PI * 2); c.arc(cx + dx, cy, rad, 0, Math.PI * 2); c.fill(); }
-    function rr(x, y, w, h, rad) { c.beginPath(); c.moveTo(x + rad, y); c.arcTo(x + w, y, x + w, y + h, rad); c.arcTo(x + w, y + h, x, y + h, rad); c.arcTo(x, y + h, x, y, rad); c.arcTo(x, y, x + w, y, rad); c.closePath(); }
-
-    switch (type) {
-      case "sovereign": {
-        robe(r * 0.5, r * 1.0, -r * 0.2, r * 1.15);
-        c.beginPath(); c.moveTo(-r * 0.5, -r * 0.2); c.quadraticCurveTo(0, r * 0.15, r * 0.5, -r * 0.2); c.lineWidth = 5; c.strokeStyle = pal.rim; c.stroke(); ink(2);
-        head(0, -r * 0.55, r * 0.32);
-        c.beginPath(); c.moveTo(-r * 0.22, -r * 0.42); c.lineTo(0, r * 0.02); c.lineTo(r * 0.22, -r * 0.42); c.closePath(); fillInk("#cdb79a", 1.6);
-        const cy = -r * 0.82;
-        c.beginPath(); c.moveTo(-r * 0.36, cy + r * 0.16); c.lineTo(-r * 0.36, cy); c.lineTo(-r * 0.18, cy + r * 0.2); c.lineTo(0, cy - r * 0.18); c.lineTo(r * 0.18, cy + r * 0.2); c.lineTo(r * 0.36, cy); c.lineTo(r * 0.36, cy + r * 0.16); c.closePath(); fillInk(pal.gold, 2);
-        break;
-      }
-      case "reaper": {
-        c.beginPath(); c.moveTo(r * 0.55, -r * 1.28); c.lineTo(r * 0.72, r * 1.1); c.strokeStyle = INK; c.lineWidth = 4.6; c.stroke(); c.strokeStyle = pal.gold; c.lineWidth = 2.2; c.stroke();
-        c.beginPath(); c.moveTo(r * 0.55, -r * 1.28); c.quadraticCurveTo(-r * 0.5, -r * 1.55, -r * 0.72, -r * 0.85); c.quadraticCurveTo(-r * 0.05, -r * 1.05, r * 0.55, -r * 1.02); c.closePath(); fillInk("#e9e2cf", 2);
-        c.beginPath(); c.moveTo(0, -r * 1.05); c.quadraticCurveTo(-r * 1.0, -r * 0.5, -r * 0.85, r * 1.15); c.lineTo(r * 0.85, r * 1.15); c.quadraticCurveTo(r * 1.0, -r * 0.5, 0, -r * 1.05); c.closePath(); fillInk(bodyGrad, 2.5);
-        c.beginPath(); c.ellipse(0, -r * 0.35, r * 0.32, r * 0.42, 0, 0, Math.PI * 2); c.fillStyle = "rgba(6,4,10,0.92)"; c.fill();
-        eyes(0, -r * 0.4, r * 0.13, r * 0.06, pal.bright);
-        break;
-      }
-      case "juggernaut": {
-        rr(-r * 0.82, -r * 0.1, r * 1.64, r * 1.2, r * 0.22); fillInk(bodyGrad, 2.8);
-        for (const sx of [-1, 1]) { c.beginPath(); c.arc(sx * r * 0.82, -r * 0.05, r * 0.42, 0, Math.PI * 2); fillInk(pal.mid, 2.6); c.beginPath(); c.arc(sx * r * 0.82, -r * 0.05, r * 0.19, 0, Math.PI * 2); fillInk(pal.gold, 1.6); }
-        head(0, -r * 0.5, r * 0.26);
-        c.beginPath(); c.moveTo(-r * 0.22, -r * 0.5); c.lineTo(r * 0.22, -r * 0.5); ink(2.4);
-        c.beginPath(); c.moveTo(0, r * 0.25); c.lineTo(r * 0.17, r * 0.5); c.lineTo(0, r * 0.75); c.lineTo(-r * 0.17, r * 0.5); c.closePath(); fillInk(pal.gold, 1.8);
-        break;
-      }
-      case "trickster": {
-        c.beginPath(); c.moveTo(r * 0.6, -r * 1.1); c.lineTo(r * 0.68, r * 1.1); c.strokeStyle = INK; c.lineWidth = 4; c.stroke(); c.strokeStyle = pal.gold; c.lineWidth = 1.8; c.stroke();
-        c.beginPath(); c.arc(r * 0.62, -r * 1.18, r * 0.18, 0, Math.PI * 2); const og = c.createRadialGradient(r * 0.56, -r * 1.24, 1, r * 0.62, -r * 1.18, r * 0.2); og.addColorStop(0, "#ffffff"); og.addColorStop(1, pal.bright); fillInk(og, 1.6);
-        robe(r * 0.32, r * 0.72, -r * 0.3, r * 1.15);
-        c.beginPath(); c.moveTo(0, -r * 1.05); c.lineTo(-r * 0.42, -r * 0.18); c.lineTo(r * 0.42, -r * 0.18); c.closePath(); fillInk(bodyGrad, 2.5);
-        c.beginPath(); c.moveTo(0, -r * 0.64); c.lineTo(r * 0.26, -r * 0.34); c.lineTo(0, -r * 0.02); c.lineTo(-r * 0.26, -r * 0.34); c.closePath(); fillInk("#e9e2cf", 2);
-        c.strokeStyle = INK; c.lineWidth = 2; c.beginPath(); c.moveTo(-r * 0.15, -r * 0.4); c.lineTo(-r * 0.02, -r * 0.32); c.moveTo(r * 0.15, -r * 0.4); c.lineTo(r * 0.02, -r * 0.32); c.stroke();
-        break;
-      }
-      case "wildrider": {
-        c.beginPath(); c.moveTo(-r * 0.9, r * 1.1); c.quadraticCurveTo(-r * 0.98, r * 0.1, -r * 0.4, -r * 0.15); c.lineTo(r * 0.4, -r * 0.15); c.quadraticCurveTo(r * 0.98, r * 0.1, r * 0.9, r * 1.1); c.closePath(); fillInk(bodyGrad, 2.5);
-        c.beginPath(); c.arc(0, -r * 0.42, r * 0.42, 0, Math.PI * 2); fillInk(pal.mid, 2.5);
-        for (const sx of [-1, 1]) { c.beginPath(); c.moveTo(sx * r * 0.3, -r * 0.64); c.quadraticCurveTo(sx * r * 0.9, -r * 1.02, sx * r * 0.72, -r * 1.4); c.quadraticCurveTo(sx * r * 0.55, -r * 0.98, sx * r * 0.16, -r * 0.72); c.closePath(); fillInk(pal.gold, 1.8); }
-        eyes(0, -r * 0.42, r * 0.16, r * 0.075, "#fff2a0");
-        c.beginPath(); c.moveTo(-r * 0.13, -r * 0.12); c.lineTo(-r * 0.05, r * 0.06); c.lineTo(r * 0.02, -r * 0.12); c.moveTo(r * 0.13, -r * 0.12); c.lineTo(r * 0.05, r * 0.06); c.lineTo(-r * 0.02, -r * 0.12); c.fillStyle = "#ffffff"; c.fill();
-        break;
-      }
-      case "skirmisher": {
-        c.beginPath(); c.moveTo(0, -r * 0.78); c.quadraticCurveTo(-r * 0.7, -r * 0.3, -r * 0.6, r * 0.7); c.quadraticCurveTo(-r * 0.3, r * 1.12, 0, r * 0.92); c.quadraticCurveTo(r * 0.3, r * 1.12, r * 0.6, r * 0.7); c.quadraticCurveTo(r * 0.7, -r * 0.3, 0, -r * 0.78); c.closePath(); fillInk(bodyGrad, 2.3);
-        c.beginPath(); c.ellipse(0, -r * 0.22, r * 0.24, r * 0.3, 0, 0, Math.PI * 2); c.fillStyle = "rgba(6,4,10,0.88)"; c.fill();
-        c.fillStyle = pal.bright; c.beginPath(); c.arc(0, -r * 0.26, r * 0.06, 0, Math.PI * 2); c.fill();
-        break;
-      }
-      case "harrower": {
-        c.beginPath(); c.moveTo(0, -r * 1.0); c.quadraticCurveTo(-r * 0.95, -r * 0.45, -r * 0.8, r * 1.12); c.lineTo(r * 0.8, r * 1.12); c.quadraticCurveTo(r * 0.95, -r * 0.45, 0, -r * 1.0); c.closePath(); fillInk(bodyGrad, 2.5);
-        c.beginPath(); c.ellipse(0, -r * 0.35, r * 0.3, r * 0.38, 0, 0, Math.PI * 2); c.fillStyle = "rgba(6,4,10,0.9)"; c.fill();
-        eyes(0, -r * 0.4, r * 0.11, r * 0.055, pal.bright);
-        c.beginPath(); c.moveTo(r * 0.58, -r * 0.15); c.quadraticCurveTo(r * 1.02, r * 0.3, r * 0.72, r * 0.72); c.quadraticCurveTo(r * 0.5, r * 0.98, r * 0.78, r * 1.0); c.strokeStyle = INK; c.lineWidth = 4; c.stroke(); c.strokeStyle = pal.gold; c.lineWidth = 2; c.stroke();
-        c.fillStyle = pal.gold; for (let i = 0; i < 3; i++) { c.beginPath(); c.arc(-r * 0.62, -r * 0.1 + i * r * 0.34, r * 0.07, 0, Math.PI * 2); c.fill(); }
-        break;
-      }
-      case "fury": {
-        for (const sx of [-1, 1]) {
-          c.beginPath();
-          c.moveTo(sx * r * 0.2, -r * 0.2);
-          c.lineTo(sx * r * 1.15, -r * 0.85);
-          c.lineTo(sx * r * 0.95, -r * 0.1);
-          c.lineTo(sx * r * 1.08, r * 0.35);
-          c.lineTo(sx * r * 0.35, r * 0.2);
-          c.closePath(); fillInk(bodyGrad, 2.2);
+    ts = ts || 0;
+    const themes = SG.THEMES || {};
+    const classic = (themes.classic && themes.classic.painters) || {};
+    const theme = themes[(state && state.theme) || activeThemeId || "classic"] || themes.classic;
+    const fallback = classic[type] || classic.default;
+    const candidates = [];
+    const primary = (theme && theme.painters && theme.painters[type]) || fallback;
+    if (primary) candidates.push(primary);
+    if (fallback && fallback !== primary) candidates.push(fallback);
+    c.save();
+    try {
+      for (const painter of candidates) {
+        if (failedPainters.has(painter)) continue;
+        c.save();
+        try {
+          runPainter(painter, c, pal, r, ts);
+          return;
+        } catch (err) {
+          // A broken painter must never stop the render loop: remember it and try the next candidate.
+          failedPainters.add(painter);
+          if (typeof console !== "undefined") console.warn("[Stygian Gambit] figure painter failed for", type, err);
+        } finally {
+          c.restore();
         }
-        c.beginPath();
-        c.moveTo(0, -r * 0.55);
-        c.quadraticCurveTo(-r * 0.4, -r * 0.1, -r * 0.35, r * 1.05);
-        c.lineTo(r * 0.35, r * 1.05);
-        c.quadraticCurveTo(r * 0.4, -r * 0.1, 0, -r * 0.55);
-        c.closePath(); fillInk(pal.mid, 2.4);
-        c.beginPath(); c.arc(0, -r * 0.62, r * 0.26, 0, Math.PI * 2); fillInk(pal.bright, 2);
-        eyes(0, -r * 0.62, r * 0.09, r * 0.05, INK);
-        break;
       }
-      default:
-        c.beginPath(); c.arc(0, 0, r * 0.5, 0, Math.PI * 2); fillInk(bodyGrad, 2.4);
+      paintFallbackFigure(c, type, pal, r);
+    } finally {
+      c.restore();
     }
   }
 
@@ -2109,14 +2099,15 @@
   ["startScreen","hud","gameOverScreen","planBar","boardActions","planLabel","btnWard","btnUndo","btnClear","btnValidate",
    "btnSummon","btnBid","crystalLight","crystalDark",
    "btnReplay","btnRevert","btnThreat","btnForesight","choiceScreen","choiceTitle","choiceSub","choiceOptions","choiceCancel",
-   "btnHotseat","btnVsBot","btnPlayAgain","btnMainMenu","btnMute","btnQuit","turnBanner","eventLog","winnerHeadline","furyToggle","hazardToggle",
+   "btnHotseat","btnVsBot","btnPlayAgain","btnMainMenu","btnMute","btnQuit","turnBanner","eventLog","winnerHeadline","furyToggle","hazardToggle","harrowerToggle",
    "aegisLight","aegisDark","royalLight","royalDark","countLight","countDark","panelLight","panelDark","midPanel","titleSideLight","titleSideDark",
    "handoffScreen","handoffTitle","handoffText","btnHandoffReady",
    "btnHelp","btnHelpGame","helpScreen","btnHelpClose","ledger","hallRecord",
    "difficulty","persona","movesPerRound","btnTrials","btnDaily","trialsScreen","trialsList","btnTrialsClose","hazardToggle",
    "btnOptions","btnOptionsGame","optionsScreen","btnOptionsClose","optMute","optReduceMotion","optColorGlyphs","optSpeed","optSpeedVal",
+   "themeSelect","optThemeSelect",
    "btnDescend","btnMirror","boonScreen","boonList","boonTitle","mirrorScreen","btnMirrorClose","mirrorObols","mirrorUpgrades",
-   "btnOnline","onlineScreen","onlineStatus","onlineSetup","onlineFury","btnCreateRoom","joinCode","btnJoinRoom","btnOnlineClose"].forEach(id => { dom[id] = document.getElementById(id); });
+   "btnOnline","onlineScreen","onlineStatus","onlineSetup","onlineFury","onlineHarrower","btnCreateRoom","joinCode","btnJoinRoom","btnOnlineClose"].forEach(id => { dom[id] = document.getElementById(id); });
 
   function setPlanControlsVisible(visible) {
     dom.planBar.classList.toggle("hidden", !visible);
@@ -2575,7 +2566,12 @@
     if (!list) return;
     list.classList.add("with-icons");
     [...list.children].forEach((li, i) => {
-      if (li.querySelector("canvas.role-icon")) return;
+      const existing = li.querySelector("canvas.role-icon");
+      if (existing) {                                           // repaint so a theme switch shows here too
+        const tp = existing.dataset.piece;
+        if (tp) paintIcon(existing, tp, tp === "fury" ? "neutral" : "light");
+        return;
+      }
       const name = ((li.querySelector("b") || {}).textContent || "").trim();
       const type = ROLE_ORDER.find(tp => pieceName(tp) === name) || ROLE_ORDER[i];
       if (!type) return;
@@ -2584,6 +2580,7 @@
       while (li.firstChild) text.appendChild(li.firstChild);   // keep the line as one block beside the icon
       const cv = document.createElement("canvas");
       cv.width = 52; cv.height = 52; cv.className = "role-icon";
+      cv.dataset.piece = type;
       paintIcon(cv, type, type === "fury" ? "neutral" : "light");
       li.append(cv, text);
     });
@@ -2649,6 +2646,48 @@
   if (dom.optSpeed) dom.optSpeed.addEventListener("input", saveOptionsFromUI);
   if (dom.optMute) dom.optMute.addEventListener("change", saveOptionsFromUI);
 
+  /* ---- Piece theme picker (start screen + options) ---- */
+  function themeDisplayName(id) {
+    const key = "theme." + id + ".name", tr = t(key);
+    if (tr !== key) return tr;
+    const th = SG.THEMES[id], lang = (SG.I18N && SG.I18N.lang) || "en";
+    return (th && th.name && (th.name[lang] || th.name.en)) || id;
+  }
+  function themeDescription(id) {
+    const key = "theme." + id + ".desc", tr = t(key);
+    if (tr !== key) return tr;
+    const th = SG.THEMES[id], lang = (SG.I18N && SG.I18N.lang) || "en";
+    return (th && th.description && (th.description[lang] || th.description.en)) || "";
+  }
+  function themeSelects() { return [dom.themeSelect, dom.optThemeSelect].filter(Boolean); }
+  function syncThemeSelects() {
+    const desc = themeDescription(activeThemeId);
+    themeSelects().forEach(sel => { sel.value = activeThemeId; sel.title = desc; });
+  }
+  // (Re)fill both pickers; called at boot and on language change so names follow the language.
+  function buildThemeOptions() {
+    const ids = Object.keys(SG.THEMES || {});
+    themeSelects().forEach(sel => {
+      sel.innerHTML = "";
+      for (const id of ids) {
+        const o = document.createElement("option");
+        o.value = id; o.textContent = themeDisplayName(id); o.title = themeDescription(id);
+        sel.appendChild(o);
+      }
+    });
+    syncThemeSelects();
+  }
+  // Cosmetic only: the board redraws on the next animation frame, legend icons repaint immediately.
+  function setTheme(id, persist = true) {
+    activeThemeId = normalizeThemeId(id);
+    if (state) state.theme = activeThemeId;
+    if (persist) { try { localStorage.setItem(THEME_STORAGE_KEY, activeThemeId); } catch (e) { /* storage blocked */ } }
+    syncThemeSelects();
+    buildLegendIcons();
+    if (dom.helpScreen && !dom.helpScreen.classList.contains("hidden")) decorateHelpRoles();
+  }
+  themeSelects().forEach(sel => sel.addEventListener("change", e => setTheme(e.target.value)));
+
   /* ---- Descent + Mirror UI ---- */
   const MIRROR_UPG = {
     aegis: { max: 2, cost: lv => 20 + lv * 20 },
@@ -2707,7 +2746,7 @@
   if (dom.btnCreateRoom) dom.btnCreateRoom.addEventListener("click", () => {
     audio._ensure();
     if (dom.onlineStatus) dom.onlineStatus.textContent = t("online.creating");
-    SG.Net.createRoom({ furies: dom.onlineFury && dom.onlineFury.checked }, (err, res) => {
+    SG.Net.createRoom({ furies: dom.onlineFury && dom.onlineFury.checked, harrowerDrag: dom.onlineHarrower && dom.onlineHarrower.checked }, (err, res) => {
       if (err) { showNetError(err); return; }
       if (dom.onlineSetup) dom.onlineSetup.classList.add("hidden");
       dom.onlineStatus.innerHTML = `${t("online.codeLabel")}<br><span class="room-code" dir="ltr">${res.code}</span><br>${t("online.codeWait")}`;
@@ -2751,10 +2790,10 @@
   dom.btnPlayAgain.addEventListener("click", () => {
     if (state.runOutcome) startDescent();
     else if (state.scenario && !state.scenario.daily) startTrial(state.scenario);
-    else startMatch(state.mode, state.humanSide, state.furiesEnabled, { movesPerRound: state.movesPerRound });
+    else startMatch(state.mode, state.humanSide, state.furiesEnabled, { movesPerRound: state.movesPerRound, harrowerDrag: state.harrowerDragEnabled });
   });
-  dom.btnHotseat.addEventListener("click", () => { audio._ensure(); startMatch("hotseat", "light", dom.furyToggle && dom.furyToggle.checked); });
-  dom.btnVsBot.addEventListener("click", () => { audio._ensure(); startMatch("bot", "dark", dom.furyToggle && dom.furyToggle.checked); });
+  dom.btnHotseat.addEventListener("click", () => { audio._ensure(); startMatch("hotseat", "light", dom.furyToggle && dom.furyToggle.checked, { harrowerDrag: dom.harrowerToggle && dom.harrowerToggle.checked }); });
+  dom.btnVsBot.addEventListener("click", () => { audio._ensure(); startMatch("bot", "dark", dom.furyToggle && dom.furyToggle.checked, { harrowerDrag: dom.harrowerToggle && dom.harrowerToggle.checked }); });
 
   /* ============================================================
    * SCENE MANAGEMENT
@@ -2832,6 +2871,12 @@
     state.humanSide = humanSide;
     state.movesPerRound = opts.movesPerRound != null ? opts.movesPerRound : (dom.movesPerRound ? parseInt(dom.movesPerRound.value, 10) || 3 : 3);
     state.furiesEnabled = !!furiesEnabled;
+    // Explicit option wins; Descent runs and Trials keep their canonical drag (on) unless overridden;
+    // custom matches follow the start-screen checkbox.
+    state.harrowerDragEnabled = opts.harrowerDrag != null
+      ? !!opts.harrowerDrag
+      : (opts.run || opts.scenario ? true : !!(dom.harrowerToggle && dom.harrowerToggle.checked));
+    if (opts.scenario && opts.scenario.harrowerDrag != null) state.harrowerDragEnabled = !!opts.scenario.harrowerDrag;
     state.hazardsEnabled = opts.hazards != null ? !!opts.hazards : !!(dom.hazardToggle && dom.hazardToggle.checked);
     if (opts.scenario) state.hazardsEnabled = !!opts.scenario.hazards;
     const o = loadStore("sg.options", {});
@@ -2922,6 +2967,7 @@
   // Past event-log lines keep the language they were written in.
   function refreshLanguage() {
     if (!state) return;
+    buildThemeOptions();
     dom.btnMute.textContent = t(audio.muted ? "btn.unmute" : "btn.mute");
     syncSidePanels();
     dom.btnSummon.textContent = t("btn.summon");

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Stygian Gambit</title>
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="style.css?v=25">
 </head>
 <body>
 <div id="app">
@@ -35,6 +35,7 @@
 
       <label class="fury-option"><input type="checkbox" id="furyToggle"> <span data-i18n-html="start.furies"></span></label>
       <label class="fury-option hazard-option"><input type="checkbox" id="hazardToggle"> <span data-i18n-html="start.hazards"></span></label>
+      <label class="fury-option harrower-option"><input type="checkbox" id="harrowerToggle"> <span data-i18n-html="start.harrowerDrag"></span></label>
 
       <div class="bot-options">
         <label><span data-i18n="start.movesPerRound">Moves per round</span>
@@ -62,6 +63,9 @@
             <option value="warden" data-i18n="persona.warden">The Warden</option>
             <option value="swarm" data-i18n="persona.swarm">The Swarm</option>
           </select>
+        </label>
+        <label><span data-i18n="themeLabel">Piece Theme</span>
+          <select id="themeSelect" class="theme-select"></select>
         </label>
       </div>
 
@@ -165,6 +169,7 @@
       <div id="onlineSetup">
         <div class="online-block">
           <label class="fury-option"><input type="checkbox" id="onlineFury"> <span data-i18n-html="online.furies"></span></label>
+          <label class="fury-option harrower-option"><input type="checkbox" id="onlineHarrower"> <span data-i18n-html="online.harrowerDrag"></span></label>
           <button id="btnCreateRoom" class="btn btn-primary" data-i18n="online.create">Create a room</button>
           <p class="rules-note" data-i18n-html="online.createNote"></p>
         </div>
@@ -203,6 +208,9 @@
       <div class="options-body">
         <label class="opt-row"><span data-i18n="lang.label">Language</span>
           <select id="optLang" class="lang-select" aria-label="Language"></select>
+        </label>
+        <label class="opt-row"><span data-i18n="themeLabel">Piece Theme</span>
+          <select id="optThemeSelect" class="theme-select"></select>
         </label>
         <label class="opt-row"><span data-i18n="options.speed">Battle speed</span>
           <input type="range" id="optSpeed" min="0.5" max="2" step="0.25" value="1">
@@ -249,15 +257,16 @@
 
 </div>
 
-<script src="i18n/en.js?v=11"></script>
-<script src="i18n/fr.js?v=11"></script>
-<script src="i18n/zh.js?v=11"></script>
-<script src="i18n/ar.js?v=11"></script>
-<script src="i18n.js?v=11"></script>
+<script src="i18n/en.js?v=25"></script>
+<script src="i18n/fr.js?v=25"></script>
+<script src="i18n/zh.js?v=25"></script>
+<script src="i18n/ar.js?v=25"></script>
+<script src="i18n.js?v=25"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
-<script src="net.js?v=11"></script>
-<script src="game.js?v=12"></script>
-<script src="ai.js?v=11"></script>
+<script src="net.js?v=25"></script>
+<script src="themes.js?v=25"></script>
+<script src="game.js?v=25"></script>
+<script src="ai.js?v=25"></script>
 </body>
 </html>

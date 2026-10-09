@@ -28,11 +28,12 @@ window.SG.I18N_DICT.en = {
   "legend.trickster": "<b>Trickster</b> — the bishop: glides any distance along a diagonal and strikes down the whole diagonal.",
   "legend.wildrider": "<b>Wildrider</b> — knight's leap over any blocker; slays an adjacent foe.",
   "legend.skirmisher": "<b>Skirmisher</b> — steps forward, kills on the forward diagonals.",
-  "legend.harrower": "<b>Harrower</b> — teleports beside any ally; its kill drags down a foe next to the victim too.",
+  "legend.harrower": "<b>Harrower</b> — teleports beside any ally; if enabled, its kill drags down a foe next to the victim too.",
   "legend.fury": "<b>Fury</b> — optional neutral horror. Prowls the board and slays whoever is nearest, either side.",
   "start.rules1": "<b>Each round has two phases.</b> In <b>Strategy</b>, you secretly command up to <b>3 pieces</b> (Move or Strike), in the order you want them to act, and may spend an <b>Aegis</b> to shield a piece from one lethal blow (limited supply). Validate to lock it in. In <b>Battle</b>, both plans play out interleaved — your 1st move, their 1st, your 2nd, their 2nd… and who resolves first alternates every round. A strike whose target has slipped away hits only shadow.",
   "start.rules2": "Every kill you land yields <b>10 Crystals</b>. Spend them in the Strategy phase to <b>summon reinforcements</b> onto any empty tile in your half of the board: <b>20</b> for a Skirmisher, <b>30</b> for a Juggernaut, Wildrider, or Trickster, <b>40</b> for a Harrower.",
   "start.furies": "Unleash <b>Furies</b> — neutral horrors that stalk the board and slay either side",
+  "start.harrowerDrag": "<b>Harrower</b> ability — its kill drags down a foe next to the victim too",
   "start.hazards": "Awaken <b>Styx Hazards</b> — lava, chasms &amp; soul-fonts that reshape the board",
   "start.movesPerRound": "Moves per round",
   "start.difficulty": "Difficulty",
@@ -137,7 +138,7 @@ window.SG.I18N_DICT.en = {
   "summon.desc.juggernaut": "Lances any foe down a straight line.",
   "summon.desc.wildrider": "Knight's leap over blockers; slays an adjacent foe.",
   "summon.desc.trickster": "Glides any distance along the diagonals and strikes down them.",
-  "summon.desc.harrower": "Teleports beside an ally; its kill drags down a second foe.",
+  "summon.desc.harrower": "Teleports beside an ally; if enabled, its kill drags down a second foe.",
   "reaper.title": "The Reaper's strike",
   "reaper.sub": "Target: <b>{target}</b>. Allies are never hit.",
   "reaper.spiral": "Reaping Spiral",
@@ -227,6 +228,7 @@ window.SG.I18N_DICT.en = {
   "online.title": "ONLINE DUEL",
   "online.subtitle": "Play the same match live across two computers.",
   "online.furies": "Unleash <b>Furies</b>",
+  "online.harrowerDrag": "<b>Harrower</b> collateral drag",
   "online.create": "Create a room",
   "online.createNote": "You'll get a code to share. You play <b>Umbra</b> (host).",
   "online.or": "— or —",
@@ -278,6 +280,33 @@ window.SG.I18N_DICT.en = {
   "options.mute": "Mute sound",
   "options.reduceMotion": "Reduce motion (no screenshake, flash or zoom)",
   "options.glyphs": "Colorblind side glyphs (▲ Umbra / ▽ Ember)",
+
+  /* ---- piece themes ---- */
+  "themeLabel": "Piece Theme",
+  "theme.classic.name": "Classic Underworld",
+  "theme.classic.desc": "Painted, ink-outlined shades of the underworld.",
+  "theme.galactic.name": "Galactic Vanguard",
+  "theme.galactic.desc": "Plasma blades, armored hunters and repulsor drones from a galaxy far below.",
+  "theme.superhero.name": "Superhuman Legion",
+  "theme.superhero.desc": "Powered armor, star-forged shields, mystic mandalas and thunder hammers of legendary champions.",
+  "theme.justice.name": "Vigilantes & Paragons",
+  "theme.justice.desc": "Solar capes, shadow cowls, tidal tridents and hard-light constructs of an original league of paragons.",
+  "theme.shinobi.name": "Shinobi Clans",
+  "theme.shinobi.desc": "Chakra masters, ocular jutsu, sand barriers, and spirit beast cloaks of the hidden ninja villages.",
+  "theme.spiritcourt.name": "Spirit Court Reapers",
+  "theme.spiritcourt.desc": "Lords of the spirit court, awakened spirit blades, blossom blade storms, solar infernos, and masked berserkers.",
+  "theme.piratecrew.name": "High-Seas Buccaneers",
+  "theme.piratecrew.desc": "Free-spirited buccaneer captains, triple-blade blademasters, blazing-kick cooks, tempest navigators and reindeer physicians with a monster form, sailing the open high seas.",
+  "theme.wonderkingdom.name": "Wonder Kingdom & Star Champions",
+  "theme.wonderkingdom.desc": "Plumber heroes with invincibility stars, vacuum-wielding ghost hunters, jungle primates with barrel shields, electric spark rodents, and armored bounty hunters defending the kingdom.",
+  "theme.olympian.name": "Olympian Pantheon",
+  "theme.olympian.desc": "Thunder-wielding Zeus, shadow-crowned Hades, lion-hooded Heracles, winged Hermes, Poseidon astride his hippocampus, Aegis-bearing Athena, sun-bright Apollo and blood-bronze Ares — the gods of Olympus descend upon the board.",
+  "theme.pharaonic.name": "Pharaonic Pantheon",
+  "theme.pharaonic.desc": "Solar-crowned Ra, jackal-headed Anubis, primeval crocodile Sobek, ibis-headed Thoth, celestial falcon Horus, pyramid Medjay guards, lioness Sekhmet and storm-lord Set — the deities of the Nile command the sands of fate.",
+  "theme.celestial.name": "Celestial Realm",
+  "theme.celestial.desc": "Pantheon of ancient Chinese myth: Ksitigarbha Bodhisattva upon his thousand-petal lotus with nine-ring staff and wish-fulfilling jewel, the Monkey King on his somersault cloud, the horned Bull Demon King, three-eyed Erlang Shen, Nezha on Wind-Fire Wheels, heavenly halberdiers, Hou Yi the sun-shooting archer and Princess Iron Fan's cyclone.",
+  "theme.hyakki.name": "Night Parade",
+  "theme.hyakki.desc": "Legion of legendary Japanese yokai: Shuten-dōji the Demon King of Mt. Ōe with banded crimson horns, a golden sake cup and his colossal demonic sake gourd; white-haired cursed swordsman Onikiri sweeping twin katanas in a torn haori; Ibaraki-dōji with the lightning-wreathed spectral Hell Hand; raven-winged Daitengu in his tokin cap with the three-feather gale fan; Kasha the bipedal hellcat with flaming ears and a hellfire scythe, leaping from its spiked burning chariot; the Kamaitachi wind-sickle trio of masked weasel ninjas whirling four-bladed sickles; noble wolf archer Hakuro; and Yuki Onna the ethereal frost maiden.",
 
   /* ---- trials & daily ---- */
   "trials.title": "TRIALS OF THE UNDERWORLD",
@@ -343,7 +372,7 @@ window.SG.I18N_DICT.en = {
   <li><b>Trickster</b> (bishop) — moves any distance along a diagonal and strikes down the whole diagonal (up to the first obstacle).</li>
   <li><b>Wildrider</b> (knight) — L-shaped leap over obstacles.</li>
   <li><b>Skirmisher</b> (pawn) — steps forward one tile, strikes on the forward diagonals.</li>
-  <li><b>Harrower</b> — teleports beside any ally; its kill drags down a foe next to the victim.</li>
+  <li><b>Harrower</b> — teleports beside any ally (collateral drag optional).</li>
   <li><b>Fury</b> (optional) — a neutral horror that hunts and slays the nearest piece of either side.</li>
 </ul>
 
