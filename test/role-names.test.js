@@ -343,8 +343,8 @@ test("public-domain pantheon and yokai captions identify the depicted figures", 
   const names = loadRoleNames();
   const expected = {
     olympian: {
-      zh: ["宙斯（雷霆之王）", "哈迪斯（冥界之王）", "赫拉克勒斯（狮皮巨力）", "赫尔墨斯（神使）", "波塞冬（海马骑者）", "雅典娜（持盾女神）", "阿波罗（日耀弓神）", "阿瑞斯（战神）"],
-      en: ["Zeus (thunder king)", "Hades (underworld king)", "Heracles (lion-skinned hero)", "Hermes (divine messenger)", "Poseidon (sea-horse rider)", "Athena (shield-bearing goddess)", "Apollo (sun-bright archer)", "Ares (god of war)"],
+      zh: ["宙斯（雷霆之王）", "哈迪斯（冥界之王）", "赫拉克勒斯（狮皮巨力）", "赫尔墨斯（神使）", "波塞冬（海神）", "雅典娜（持盾女神）", "阿波罗（日耀弓神）", "阿瑞斯（战神）"],
+      en: ["Zeus (thunder king)", "Hades (underworld king)", "Heracles (lion-skinned hero)", "Hermes (divine messenger)", "Poseidon (god of the sea)", "Athena (shield-bearing goddess)", "Apollo (sun-bright archer)", "Ares (god of war)"],
     },
     pharaonic: {
       zh: ["阿蒙·拉（太阳主神）", "伊西斯（魔法与守护女神）", "奥西里斯／卜塔（冥王与创造神）", "托特（智慧与书写之神）", "荷鲁斯（天空之鹰）", "阿努比斯／盖布（亡者引路者与大地神）", "塞赫麦特／哈索尔（狮首与日冠女神）", "塞特（风暴之神）"],
@@ -385,7 +385,7 @@ test("homage captions keep Chinese homophone primaries, non-empty epithets, and 
     ["galactic", "reaper", "暗味达"],
     ["galactic", "wildrider", "波巴肥特"],
     ["superhero", "trickster", "编蛛侠客"],
-    ["justice", "reaper", "编幅侠影"],
+    ["justice", "sovereign", "编幅侠影"],
   ];
   for (const [theme, role, spelling] of representativeWordplay) {
     assert.equal(names[theme][role].zh.split("（")[0], spelling, `${theme}.${role} primary homophone`);
