@@ -4,6 +4,20 @@ window.SG.I18N_DICT.ar = {
   "doc.title": "Stygian Gambit",
   "lang.label": "اللغة",
 
+  "btn.spectator": "مشاهدة: حاسوب ضد حاسوب",
+  "banner.spectator": "مشاهدة · الجولة {round}",
+  "log.spectator": "حاسوب ضد حاسوب · {persona} · {difficulty} · للمشاهدة فقط",
+  "fate.heading": "بذور القدر",
+  "fate.hint": "شارك الرمز. البداية نفسها، والنهاية من صنعك.",
+  "fate.codeLabel": "رمز البذرة",
+  "fate.new": "قدر جديد",
+  "fate.play": "تحدَّ القدر",
+  "fate.invalid": "استخدم SG1- متبوعاً بحرف إلى 12 حرفاً أو رقماً (A–Z، 0–9).",
+  "fate.trialTitle": "القدر {code}",
+  "fate.seedLabel": "شارك هذه البداية: {code}",
+  "over.fateWon": "انتصار على القدر · {code}",
+  "over.fateLost": "القدر لم ينكسر · {code}",
+
   /* ---- sides, pieces ---- */
   "side.light": "الدُّجى",
   "side.dark": "الجمر",

@@ -13,6 +13,8 @@ Pure vanilla HTML/CSS/JS on an HTML5 canvas — no build step, no dependencies.
 
 ## Modes
 - **Local Duel (1v1)** and **Duel the Bot** (difficulty tiers + AI personalities).
+- **Watch: Bot vs Bot** — both armies plan and fight automatically. Uses the selected difficulty, personality and board settings equally for both sides, without player upgrades or progression rewards. Options (including battle speed), Help and Main Menu remain available; Play Again starts another spectator match.
+- **Fate Seeds** — share a short code such as `SG1-UNDERWORLD` to challenge friends from the same tactical opening. Generate a new code or enter one, then choose **Play fate** (or press Enter). Codes fix the scenario, formation, resources and rules: three commands, Harrower drag on, no Furies, hazards or Mirror upgrades. AI decisions remain live, so the same opening can produce different endings. The code appears in the log and results; **Play Again** retries it. These challenges do not alter Trial completion, Daily streaks or duel records.
 - **Trials of the Underworld** (handcrafted scenarios), **Daily Gambit** (seeded, with streak).
 - **Chambers of the Descent** — a roguelike run with drafted **Boons** and the persistent **Mirror of Night**.
 - Styx Hazards (living terrain), replay & undo, threat overlay, foresight, and accessibility options.

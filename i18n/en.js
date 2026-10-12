@@ -5,6 +5,20 @@ window.SG.I18N_DICT.en = {
   "doc.title": "Stygian Gambit",
   "lang.label": "Language",
 
+  "btn.spectator": "Watch: Bot vs Bot",
+  "banner.spectator": "Spectating · Round {round}",
+  "log.spectator": "Bot vs Bot · {persona} · {difficulty} · watch only",
+  "fate.heading": "Fate Seeds",
+  "fate.hint": "Share a code. Face the same opening. Forge a different ending.",
+  "fate.codeLabel": "Seed code",
+  "fate.new": "New fate",
+  "fate.play": "Play fate",
+  "fate.invalid": "Use SG1- followed by 1–12 letters or digits (A–Z, 0–9).",
+  "fate.trialTitle": "Fate {code}",
+  "fate.seedLabel": "Share this opening: {code}",
+  "over.fateWon": "FATE CONQUERED · {code}",
+  "over.fateLost": "FATE UNBROKEN · {code}",
+
   /* ---- sides, pieces ---- */
   "side.light": "Umbra",
   "side.dark": "Ember",
