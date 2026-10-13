@@ -14,6 +14,15 @@
   const AEGIS_START = 3;        // limited protection charges per side, per match
   const MAX_CMD = 3;           // up to three pieces commanded per round
   const CRYSTALS_PER_KILL = 10; // 3 kills = 30 crystals
+  // Timed planning: each human planning turn gets this many seconds (start-screen choice, remembered).
+  const PLAN_SECONDS_OPTIONS = [20, 60, 90];
+  const PLAN_SECONDS_DEFAULT = 60;
+  const PLAN_SECONDS_KEY = "sg.planSeconds";
+  const PLAN_WARN_SECONDS = 10;  // final-stretch warning styling + one screen-reader announcement
+  // Initiative auction: one sealed bid per side at the start of every round, before planning.
+  const AUCTION_SECONDS = 10;    // each local human bidder's own short clock (never taken from the planning clock)
+  const AUCTION_WARN_SECONDS = 3;
+  const BID_STEP = 20;           // bids are multiples of 20◆ (the existing initiative rule)
   const SUMMON_OPTIONS = [
     { type: "skirmisher", cost: 20, label: "Skirmisher" },
     { type: "juggernaut", cost: 30, label: "Juggernaut" },
@@ -123,6 +132,11 @@
       theme: activeThemeId,     // visual piece theme (cosmetic only)
       humanSide: "light",
       movesPerRound: 3,
+      planSeconds: 0,           // configured per-turn planning clock (s); 0 = untimed (online, idle menus)
+      planClock: null,          // the running clock of the current planning turn (see startPlanClock)
+      auction: null,            // this round's initiative auction (sealed bids live here until revealed)
+      auctionClock: null,       // the running 10 s clock of the current local bidder (see startAuctionClock)
+      auctionDone: false,       // true once this round's bids are revealed into crystalBid (no re-auction)
       pieces: [],
       roundNumber: 0,
       firstSide: "light",       // resolves first this round (alternates)
@@ -226,6 +240,7 @@
       pieces: state.pieces.map(clonePieceDurable),
       crystals: { light: state.crystals.light, dark: state.crystals.dark },
       crystalBid: { light: state.crystalBid.light, dark: state.crystalBid.dark },
+      auctionDone: !!state.auctionDone,
       aegis: { light: state.aegis.light, dark: state.aegis.dark },
       furiesEnabled: state.furiesEnabled, furyCount: state.furyCount,
       roundNumber: state.roundNumber, firstSide: state.firstSide, planningSide: state.planningSide,
@@ -247,6 +262,7 @@
     state.pieces = snap.pieces.map(pieceFromDurable);
     state.crystals = { light: snap.crystals.light, dark: snap.crystals.dark };
     state.crystalBid = snap.crystalBid ? { light: snap.crystalBid.light, dark: snap.crystalBid.dark } : { light: 0, dark: 0 };
+    state.auctionDone = snap.auctionDone !== false;   // a restored round keeps its revealed bids (no re-auction)
     state.aegis = { light: snap.aegis.light, dark: snap.aegis.dark };
     state.furiesEnabled = snap.furiesEnabled; state.furyCount = snap.furyCount;
     state.roundNumber = snap.roundNumber; state.firstSide = snap.firstSide; state.planningSide = snap.planningSide;
@@ -723,6 +739,7 @@
       updatePlanBar(); refreshBanner();
       return;
     }
+    stopPlanClock();                                // the turn is sealed: a click and the expiry can never both submit
     const side = state.planningSide;
     state.planLocked[side] = true;
     clearSelection();
@@ -746,6 +763,7 @@
 
   function showHandoff(nextSide) {
     resetTurnTransients();
+    stopPlanClock();               // nobody's clock runs while the device changes hands
     state.scene = "handoff";
     dom.handoffTitle.textContent = t("handoff.title");
     dom.handoffText.textContent = t("handoff.text", { side: sideLabel(nextSide) });
@@ -755,6 +773,7 @@
     refreshBanner();
   }
   function onHandoffReady() {
+    if (state.scene !== "handoff") return;   // a stray second "Ready" must not restart the next side's clock
     dom.handoffScreen.classList.add("hidden");
     state.planningSide = state.handoffTo;
     state.handoffTo = null;
@@ -767,6 +786,7 @@
     clearSelection();
     refreshBanner();
     updatePlanBar();
+    startPlanClock();              // the second planner's own full turn starts only now, not on the pass screen
   }
 
   function beginPlanningPhase() {
@@ -778,6 +798,8 @@
     state.onlineWaiting = false;
     state.undoStack = [];
     state.crystalBid = { light: 0, dark: 0 };
+    state.auction = null;
+    state.auctionDone = false;              // this round's sealed auction runs before anyone plans
     state.planNote = null; state.planNoteUntil = 0;
     state.wardMode = false;
     state.summonArmed = null;
@@ -791,15 +813,50 @@
     clearSelection();
     if (!state.isReplay) { state.history.push(snapshotState()); if (state.history.length > 14) state.history.shift(); }
     if (state.mode === "online") { onlineRoundSnap = snapshotState(); onlineRoundIds = new Set(state.pieces.filter(p => p.alive).map(p => p.id)); }
+    // The initiative auction comes first; it enters the planning turn itself once the bids are revealed
+    // (straight away when nobody can afford a bid). The planning clock starts only then, in full.
+    beginAuction();
+  }
+
+  // Enters (or re-enters) the planning turn of the side in state.planningSide, with a fresh full clock.
+  function enterPlanningTurn() {
+    state.scene = "planning";
     refreshBanner();
     updatePlanBar();
     syncSidePanels();
+    startPlanClock();
   }
 
   /* ============================================================
    * BATTLE PHASE
    * ============================================================ */
+  // The existing initiative rules, in one place (used by the battle and by the auction reveal):
+  // Hermes' Haste overrides the alternating order for the side that holds it; then a higher crystal bid
+  // takes initiative and pays in full while the other bidder pays 70% of their pledge; equal non-zero
+  // bids keep that order and both pay 70%; no bids keep it for free.
+  function resolveInitiative(bids) {
+    let fs = state.firstSide;
+    if (hasBoon("light", "hermes") && !hasBoon("dark", "hermes")) fs = "light";
+    else if (hasBoon("dark", "hermes") && !hasBoon("light", "hermes")) fs = "dark";
+    const b = { light: (bids && bids.light) || 0, dark: (bids && bids.dark) || 0 };
+    const pay = { light: 0, dark: 0 };
+    let outcome = "none";
+    if (b.light !== b.dark) {
+      outcome = b.light > b.dark ? "light" : "dark";
+      fs = outcome;
+      const loser = otherSide(outcome);
+      pay[outcome] = b[outcome];
+      if (b[loser] > 0) pay[loser] = Math.round(b[loser] * 0.7);
+    } else if (b.light > 0) {
+      outcome = "tie";
+      pay.light = pay.dark = Math.round(b.light * 0.7);
+    }
+    return { first: fs, outcome, bids: b, pay };
+  }
+
   function beginBattle(ts) {
+    // A Replay is a planning-turn tool: the planner's clock keeps running through it (see tickPlanClock).
+    if (!state.isReplay) stopPlanClock();
     state.scene = "battle";
     state.combo = { light: 0, dark: 0 };
     state.pendingMoves = [];
@@ -812,35 +869,16 @@
     state.pendingReaperStrike = null;
     setPlanControlsVisible(false);
     closeChoice();
-    // Hermes' Haste overrides initiative for the side that holds it.
-    let fs = state.firstSide;
-    if (hasBoon("light", "hermes") && !hasBoon("dark", "hermes")) fs = "light";
-    else if (hasBoon("dark", "hermes") && !hasBoon("light", "hermes")) fs = "dark";
-    const bidLight = (state.crystalBid && state.crystalBid.light) || 0;
-    const bidDark = (state.crystalBid && state.crystalBid.dark) || 0;
-    if (bidLight > bidDark) {
-      fs = "light";
-      state.crystals.light = Math.max(0, state.crystals.light - bidLight);
-      logEvent(t("log.bidWon", { side: sideLabel("light"), bid: bidLight }));
-      if (bidDark > 0) {
-        const loserPaid = Math.round(bidDark * 0.7);
-        state.crystals.dark = Math.max(0, state.crystals.dark - loserPaid);
-        if (loserPaid > 0) logEvent(t("log.bidLoser", { side: sideLabel("dark"), paid: loserPaid }));
-      }
-    } else if (bidDark > bidLight) {
-      fs = "dark";
-      state.crystals.dark = Math.max(0, state.crystals.dark - bidDark);
-      logEvent(t("log.bidWon", { side: sideLabel("dark"), bid: bidDark }));
-      if (bidLight > 0) {
-        const loserPaid = Math.round(bidLight * 0.7);
-        state.crystals.light = Math.max(0, state.crystals.light - loserPaid);
-        if (loserPaid > 0) logEvent(t("log.bidLoser", { side: sideLabel("light"), paid: loserPaid }));
-      }
-    } else if (bidLight > 0) {
-      const paid = Math.round(bidLight * 0.7);
-      state.crystals.light = Math.max(0, state.crystals.light - paid);
-      state.crystals.dark = Math.max(0, state.crystals.dark - paid);
-      logEvent(t("log.bidTie", { bid: bidLight, side: sideLabel(fs), paid }));
+    // Initiative: Hermes' Haste, then this round's (auction-sealed) crystal bids — see resolveInitiative.
+    const ini = resolveInitiative(state.crystalBid);
+    const fs = ini.first;
+    for (const s of ["light", "dark"]) if (ini.pay[s] > 0) state.crystals[s] = Math.max(0, state.crystals[s] - ini.pay[s]);
+    if (ini.outcome === "light" || ini.outcome === "dark") {
+      const loser = otherSide(ini.outcome);
+      logEvent(t("log.bidWon", { side: sideLabel(ini.outcome), bid: ini.bids[ini.outcome] }));
+      if (ini.pay[loser] > 0) logEvent(t("log.bidLoser", { side: sideLabel(loser), paid: ini.pay[loser] }));
+    } else if (ini.outcome === "tie") {
+      logEvent(t("log.bidTie", { bid: ini.bids.light, side: sideLabel(fs), paid: ini.pay.light }));
     }
     syncSidePanels();
     const ss = otherSide(fs);
@@ -1193,6 +1231,8 @@
   }
 
   function endMatch(winnerSide, ts) {
+    stopPlanClock();
+    hideAuctionUI();
     if (state.run && state.run.active) { handleRunEnd(winnerSide, ts); return; }
     state.scene = "gameover";
     state.winnerSide = winnerSide || null;
@@ -1292,6 +1332,9 @@
     nextPieceId = 1;
     state.mode = "online";
     state.humanSide = mySide;
+    // Online duels stay untimed: the room only relays plans (no server clock), so a per-client
+    // countdown could neither be enforced nor agreed on. The start screen says so.
+    state.planSeconds = 0;
     state.furiesEnabled = !!config.furies;
     state.harrowerDragEnabled = !!config.harrowerDrag;
     state.hazardsEnabled = false;                 // terrain RNG would desync clients
@@ -1312,6 +1355,7 @@
     dom.startScreen.classList.add("hidden");
     dom.gameOverScreen.classList.add("hidden");
     dom.handoffScreen.classList.add("hidden");
+    hideAuctionUI();
     dom.hud.classList.remove("hidden");
     beginPlanningPhase();
     syncSidePanels();
@@ -1341,7 +1385,8 @@
       if (sp && s.warded) { sp.warded = true; sp.wardRound = state.roundNumber; }
     }
     if (typeof packet.aegis === "number") state.aegis[side] = clamp(packet.aegis, 0, state.aegisMax[side]);
-    if (packet.bid != null) state.crystalBid[side] = packet.bid || 0;
+    // Bids are sealed in the pre-planning auction; a plan packet can never change them afterwards.
+    if (packet.bid != null && !state.auctionDone) state.crystalBid[side] = packet.bid || 0;
   }
   function resolveOnlineRound(plans) {
     if (state.mode !== "online" || !onlineRoundSnap) return;
@@ -1356,6 +1401,8 @@
   function onlineOpponentLeft() {
     if (state.mode !== "online") return;
     closeChoice();
+    hideAuctionUI();
+    state.auction = null;
     state.onlineWaiting = false;
     if (dom.onlineStatus) dom.onlineStatus.innerHTML = t("online.left");
     if (dom.onlineSetup) dom.onlineSetup.classList.remove("hidden");
@@ -1405,7 +1452,7 @@
     let plan = { commands: [], wards: [], bid: 0 };
     if (window.SG.AI && window.SG.AI.planTurn) plan = window.SG.AI.planTurn(side, diff) || plan;
     state.plan[side] = plan.commands.slice(0, maxCmdFor(side));
-    state.crystalBid[side] = plan.bid || 0;
+    if (!state.auctionDone) state.crystalBid[side] = plan.bid || 0;   // normally sealed earlier, in the auction
     for (const id of plan.wards) {
       const p = pieceById(id);
       if (p && p.alive && p.side === side && p.type !== "sovereign" && p.type !== "reaper" && !p.warded && state.aegis[side] > 0) {
@@ -2448,8 +2495,10 @@
    "btnHotseat","btnVsBot","btnPlayAgain","btnMainMenu","btnQuit","turnBanner","eventLog","winnerHeadline","furyToggle","hazardToggle","harrowerToggle",
    "aegisLight","aegisDark","royalLight","royalDark","countLight","countDark","panelLight","panelDark","midPanel","titleSideLight","titleSideDark",
    "handoffScreen","handoffTitle","handoffText","btnHandoffReady",
+   "auctionScreen","auctionTitle","auctionSub","auctionTimer","auctionControls","auctionOptions","auctionAmount","auctionCustomLabel",
+   "auctionError","btnAuctionPass","btnAuctionLock","auctionReveal","btnAuctionContinue","btnAuctionQuit","btnAuctionRetry",
    "btnHelp","btnHelpGame","helpScreen","btnHelpClose","ledger","hallRecord",
-   "difficulty","persona","movesPerRound","btnTrials","btnDaily","trialsScreen","trialsList","btnTrialsClose","hazardToggle",
+   "difficulty","persona","movesPerRound","planSeconds","turnTimer","turnTimerLive","btnTrials","btnDaily","trialsScreen","trialsList","btnTrialsClose","hazardToggle",
    "btnOptions","btnOptionsGame","optionsScreen","btnOptionsClose","optReduceMotion","optColorGlyphs","optSpeed","optSpeedVal",
    "themeSelect","optThemeSelect",
    "btnDescend","btnMirror","boonScreen","boonList","boonTitle","mirrorScreen","btnMirrorClose","mirrorObols","mirrorUpgrades",
@@ -2487,13 +2536,554 @@
     if (state.scene === "planning" && state.mode === "online" && state.onlineWaiting) txt = t("banner.waiting");
     else if (state.scene === "planning" && state.planNote && performance.now() < (state.planNoteUntil || 0)) { txt = state.planNote; note = true; }
     else if (state.scene === "planning" && state.summonArmed) { txt = t("banner.placing", { piece: pieceName(state.summonArmed) }); note = true; }
-    else if (state.scene === "planning") txt = t("banner.planning", { chamber, side: sideLabel(state.planningSide), round: state.roundNumber + 1, first: sideLabel(state.firstSide) });
+    else if (state.scene === "planning") txt = t("banner.planning", { chamber, side: sideLabel(state.planningSide), round: state.roundNumber + 1, first: sideLabel(resolveInitiative(state.crystalBid).first) });
     else if (state.scene === "battle") txt = (state.isReplay ? t("banner.replay") : "") + (state.caption || t("banner.battle"));
     else if (state.scene === "handoff") txt = t("banner.handoff");
+    else if (state.scene === "auction") txt = t("banner.auction", { chamber, round: state.roundNumber + 1 });
     dom.turnBanner.textContent = txt;
     dom.turnBanner.classList.toggle("note", note);
     dom.turnBanner.classList.toggle("side-light", state.planningSide === "light");
     dom.turnBanner.classList.toggle("side-dark", state.planningSide === "dark");
+  }
+
+  /* ---- Timed planning (per-turn decision clock) ----
+   * Policy, kept deliberately simple and exploit-free:
+   *  - Only a HUMAN's local planning turn is timed (Local Duel, Duel the Bot, Trials, Daily, Descent).
+   *    Each hotseat side gets its own full turn; the Warden's instant plan never touches the clock;
+   *    Online Duels are untimed (no authoritative server clock exists to enforce one).
+   *  - The clock is a fixed deadline on the monotonic clock (performance.now / rAF timestamps), so it
+   *    never drifts with frame rate and is immune to wall-clock changes. It is NOT paused by Help,
+   *    Options, a pick-one pop-up, a Replay or a hidden tab — time spent there is planning time.
+   *    It stops for good when the turn is sealed (Validate / expiry), on the pass-device screen, in
+   *    battle, at game over and on the menu. A new match replaces `state`, discarding any old clock.
+   *  - On expiry the turn is sealed through the normal onValidate() path, exactly once: whatever was
+   *    already ordered stands; an unanswered pop-up / an armed-but-unplaced summon never became an
+   *    order and is dropped; no orders at all simply ends the side's turn (an empty plan).
+   *    If it lapses mid-Replay (or while the tab was hidden), it fires on the first planning frame back. */
+  let planClockGen = 0;   // generation token: a stale clock object can never seal a later turn
+  function normalizePlanSeconds(v) {
+    const n = parseInt(v, 10);
+    return PLAN_SECONDS_OPTIONS.includes(n) ? n : PLAN_SECONDS_DEFAULT;
+  }
+  function planTimerEnabled() { return !!state && state.mode !== "online" && state.planSeconds > 0; }
+  // Same monotonic timebase as rAF timestamps (falls back to Date.now when performance.now is missing).
+  function monotonicNow() { return perfNow(); }
+  // True once the running clock's deadline has passed, even if no frame has sealed the turn yet
+  // (e.g. rAF was throttled in a background tab). Late input is then ignored; the next frame submits.
+  function planClockExpired() {
+    const c = state && state.planClock;
+    return !!c && monotonicNow() >= c.deadline;
+  }
+  function planClockSecondsLeft(c, now) {
+    return Math.max(0, Math.min(c.seconds, Math.ceil((c.deadline - now) / 1000)));
+  }
+  function formatClock(sec) { return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0"); }
+  function announcePlanClock(text) { if (dom.turnTimerLive) dom.turnTimerLive.textContent = text; }
+  // Writes the HUD countdown only when the shown second changes (once per second, never per frame).
+  function renderPlanClock(now, force) {
+    const el = dom.turnTimer;
+    if (!el) return;
+    const c = state && state.planClock;
+    if (!c) {
+      if (force || !el.classList.contains("hidden")) {
+        el.classList.add("hidden");
+        el.classList.remove("warn");
+        el.textContent = "";
+      }
+      return;
+    }
+    const sec = planClockSecondsLeft(c, now);
+    if (!force && sec === c.shownSec) return;
+    c.shownSec = sec;
+    el.textContent = t("timer.label", { time: formatClock(sec) });
+    el.classList.toggle("warn", sec <= PLAN_WARN_SECONDS);
+    el.classList.toggle("calm", !!state.reduceMotion);   // in-game Reduce Motion option: no warning pulse
+    el.classList.toggle("side-light", c.side === "light");
+    el.classList.toggle("side-dark", c.side === "dark");
+    el.classList.remove("hidden");
+  }
+  function stopPlanClock() {
+    if (!state) return;
+    state.planClock = null;
+    renderPlanClock(0, true);
+  }
+  // Starts a fresh, full clock for whoever is planning right now (no-op → untimed for online / AI).
+  function startPlanClock() {
+    if (!planTimerEnabled() || state.scene !== "planning" || state.isReplay) { stopPlanClock(); return; }
+    if (state.mode === "bot" && state.planningSide !== state.humanSide) { stopPlanClock(); return; }
+    const now = monotonicNow();
+    const side = state.planningSide;
+    state.planClock = {
+      gen: ++planClockGen, side, round: state.roundNumber, seconds: state.planSeconds,
+      startedAt: now, deadline: now + state.planSeconds * 1000,
+      fired: false, warned: false, shownSec: -1,
+    };
+    renderPlanClock(now, true);
+    announcePlanClock(t("timer.start", { side: sideLabel(side), n: state.planSeconds }));
+  }
+  // Called every animation frame with its timestamp.
+  function tickPlanClock(now) {
+    const c = state.planClock;
+    if (!c) return;
+    const replaying = state.scene === "battle" && state.isReplay;
+    if (state.scene !== "planning" && !replaying) { stopPlanClock(); return; }   // safety net
+    renderPlanClock(now, false);
+    const sec = planClockSecondsLeft(c, now);
+    if (!c.warned && sec > 0 && sec <= PLAN_WARN_SECONDS) {
+      c.warned = true;
+      announcePlanClock(t("timer.warn", { n: sec }));
+    }
+    if (c.fired || now < c.deadline || replaying) return;   // a Replay finishes first, then the turn seals
+    c.fired = true;
+    expirePlanClock(c.gen);
+  }
+  // Time's up: seal the current turn exactly once through the normal submit path.
+  function expirePlanClock(gen) {
+    const c = state.planClock;
+    if (!c || c.gen !== gen) return false;
+    if (state.scene !== "planning" || state.isReplay || state.planningSide !== c.side || state.planLocked[c.side]) {
+      stopPlanClock();
+      return false;
+    }
+    if (choiceOpen()) cancelChoice();               // an unanswered pop-up never became an order
+    state.summonArmed = null; state.wardMode = false; state.pendingReaperStrike = null;
+    const who = sideLabel(c.side);
+    logEvent(t("log.timeUp", { side: who }));
+    announcePlanClock(t("timer.expired", { side: who }));
+    onValidate();                                   // stops the clock and moves on (handoff / battle)
+    if (state.planClock === c) stopPlanClock();     // defensive: never leave a spent clock behind
+    return true;
+  }
+
+  /* ---- Initiative auction (one sealed bid per side, before anyone plans) ----
+   * Flow per round: beginPlanningPhase → beginAuction → bid dialog(s) → reveal → enterPlanningTurn.
+   *  - Same currency and rules as before (multiples of 20◆ up to what the side holds; see resolveInitiative).
+   *    The revealed bids land in state.crystalBid exactly where the old in-plan "Initiative" button put
+   *    them, so the summon reserve, the payment when the clash begins and its log lines are unchanged.
+   *    The planning-stage bid button is now a read-only display: there is no second bid.
+   *  - Sealed: bids live in state.auction.bids until every bid is in. Nothing about a bid (amount, pass,
+   *    timeout) is shown, logged or announced before the reveal; the input is cleared after each lock.
+   *  - Local Duel: Light bids → pass-device screen → Dark bids → reveal (its button hands the device back
+   *    to Light, whose full planning turn starts only then). Duel the Bot: the Warden seals its bid from
+   *    public information (SG.AI.planBid) before the human's bid exists. A side that cannot afford 20◆
+   *    passes automatically (public: crystal counts are on screen).
+   *  - Each local human bidder gets their own AUCTION clock (AUCTION_SECONDS, monotonic deadline),
+   *    separate from the planning clock, which never runs during the auction. Expiry = a pass, sealed
+   *    exactly once through lockAuctionBid; the timeout is reported at the reveal, not before.
+   *  - Online: both clients write their bid to the room (rounds/N/bids) before any plan; untimed, like
+   *    online planning (no authoritative clock). Both clients validate both bids identically.
+   *  - One auction per round: Replay and Undo Round restore the round's revealed bids (snapshot field
+   *    auctionDone) instead of re-running it. */
+  let auctionGen = 0;         // a stale auction object can never act on a later one
+  let auctionClockGen = 0;    // a stale bid clock can never seal a later bidder
+  let auctionOptionButtons = [];
+  function maxBidFor(side) {
+    const have = (state.crystals && state.crystals[side]) || 0;
+    return Math.floor(Math.max(0, have) / BID_STEP) * BID_STEP;
+  }
+  // Strict bid format: a whole number of crystals, a multiple of 20, from 0 up to maxBid. Anything else → null.
+  function normalizeBid(raw, maxBid) {
+    if (typeof raw === "number") { if (!Number.isFinite(raw)) return null; raw = String(raw); }
+    if (typeof raw !== "string") return null;
+    const s = raw.trim();
+    if (!/^\d{1,6}$/.test(s)) return null;
+    const n = parseInt(s, 10);
+    if (n % BID_STEP !== 0 || n > maxBid) return null;
+    return n;
+  }
+  // Quick amounts mirror the old bid pop-up: 20…100◆, plus "all in" when more is affordable.
+  function auctionQuickAmounts(max) {
+    const out = [];
+    for (let n = BID_STEP; n <= Math.min(5 * BID_STEP, max); n += BID_STEP) out.push(n);
+    if (max > 5 * BID_STEP) out.push(max);
+    return out;
+  }
+  function setAttr(el, name, value) { if (el && typeof el.setAttribute === "function") el.setAttribute(name, value); }
+  function auctionActive() { return !!state && state.scene === "auction" && !!state.auction; }
+  // The Warden's sealed bid: only public information, never the human's bid (which doesn't exist yet).
+  function aiAuctionBid(side) {
+    let bid = 0;
+    try {
+      const AI = window.SG && window.SG.AI;
+      if (AI && typeof AI.planBid === "function") bid = AI.planBid(side, state.difficulty);
+    } catch (e) { bid = 0; }
+    const ok = normalizeBid(bid, maxBidFor(side));
+    return ok == null ? 0 : ok;
+  }
+
+  function beginAuction() {
+    stopPlanClock();
+    stopAuctionClock();
+    closeChoice();
+    state.onlineBidsPending = (state.onlineBidsPending && state.onlineBidsPending.round === state.roundNumber) ? state.onlineBidsPending : null;
+    const a = state.auction = {
+      gen: ++auctionGen, round: state.roundNumber, phase: "start",
+      bids: { light: null, dark: null }, timedOut: { light: false, dark: false },
+      queue: [], cur: null, asked: [], holder: "light",
+      online: state.mode === "online", submitted: false, autoPass: false, result: null,
+    };
+    const canBid = s => maxBidFor(s) >= BID_STEP;
+    if (a.online) {
+      // Affordability is identical on both clients, so a round where nobody can bid needs no exchange.
+      if (!canBid("light") && !canBid("dark")) { a.bids.light = a.bids.dark = 0; revealAuction(); return; }
+      state.scene = "auction";
+      setPlanControlsVisible(false);
+      refreshBanner();
+      if (canBid(state.humanSide)) openAuctionDialog(state.humanSide);
+      else { a.cur = state.humanSide; a.phase = "bid"; a.autoPass = true; sealAuctionBid(state.humanSide, 0, false); }
+      return;
+    }
+    for (const s of ["light", "dark"]) if (!canBid(s)) a.bids[s] = 0;
+    if (state.mode === "bot") {
+      const botSide = otherSide(state.humanSide);
+      if (a.bids[botSide] == null) a.bids[botSide] = aiAuctionBid(botSide);
+    }
+    a.queue = (state.mode === "hotseat" ? ["light", "dark"] : [state.humanSide]).filter(s => a.bids[s] == null);
+    if (!a.queue.length) { revealAuction(); return; }   // nobody to ask
+    state.scene = "auction";
+    setPlanControlsVisible(false);
+    refreshBanner();
+    nextAuctionBidder();
+  }
+  function nextAuctionBidder() {
+    const a = state.auction;
+    if (!a.queue.length) { revealAuction(); return; }
+    const side = a.queue.shift();
+    // Local Duel: whoever holds the device bids; anyone else gets the private pass-device screen first.
+    if (state.mode === "hotseat" && side !== a.holder) showAuctionHandoff(side);
+    else openAuctionDialog(side);
+  }
+  function showAuctionHandoff(side) {
+    const a = state.auction;
+    a.phase = "handoff"; a.cur = side;
+    stopAuctionClock();
+    hideAuctionScreen();
+    renderAuctionHandoff();
+    dom.handoffScreen.classList.remove("hidden");
+    if (dom.hud) dom.hud.inert = true;
+    refreshBanner();
+    if (dom.btnHandoffReady && dom.btnHandoffReady.focus) dom.btnHandoffReady.focus();
+  }
+  function renderAuctionHandoff() {
+    const a = state.auction;
+    const prev = a.asked.length ? a.asked[a.asked.length - 1] : null;
+    dom.handoffTitle.textContent = t("handoff.title");
+    dom.handoffText.textContent = prev
+      ? t("auction.handoffText", { prev: sideLabel(prev), side: sideLabel(a.cur) })
+      : t("auction.handoffTextFirst", { side: sideLabel(a.cur) });
+    dom.btnHandoffReady.textContent = t("auction.handoffReady", { side: sideLabel(a.cur) });
+  }
+  function onAuctionHandoffReady() {
+    const a = state.auction;
+    if (!auctionActive() || a.phase !== "handoff") return;   // a stray second click does nothing
+    dom.handoffScreen.classList.add("hidden");
+    openAuctionDialog(a.cur);
+  }
+  function openAuctionDialog(side) {
+    const a = state.auction;
+    a.phase = "bid"; a.cur = side; a.holder = side;
+    a.asked.push(side);
+    renderAuctionDialog(true);           // fresh: an empty slate, nothing left from a previous bidder
+    showAuctionScreen();
+    if (!a.online) startAuctionClock(side);
+    refreshBanner();
+    const first = auctionOptionButtons.length ? auctionOptionButtons[0].b : dom.auctionAmount;
+    if (first && first.focus) first.focus();
+  }
+  // Seals the current bidder's bid exactly once: a lock / pass click ("manual") or the clock ("timeout").
+  function lockAuctionBid(side, raw, reason) {
+    const a = state.auction;
+    if (!auctionActive() || a.phase !== "bid" || a.cur !== side) return false;
+    if (reason !== "timeout" && auctionClockExpired()) return false;   // too late: the next frame passes for them
+    const max = maxBidFor(side);
+    const amount = normalizeBid(raw, max);
+    if (amount == null) { showAuctionError(t("auction.errInvalid", { max })); return false; }
+    sealAuctionBid(side, amount, reason === "timeout");
+    return true;
+  }
+  function sealAuctionBid(side, amount, timedOut) {
+    const a = state.auction;
+    stopAuctionClock();
+    a.bids[side] = amount;
+    a.timedOut[side] = !!timedOut;
+    a.phase = "sealed";
+    clearAuctionInput();                  // nothing of this bid stays on screen for the next bidder
+    if (!a.autoPass) announcePlanClock(t("auction.sealed", { side: sideLabel(side) }));   // same words for a pass or a timeout
+    if (a.online) {
+      a.submitted = true;
+      sendOnlineBid(a);
+      return;
+    }
+    hideAuctionScreen();
+    nextAuctionBidder();
+  }
+  // Online: write this side's sealed bid to the room. The reveal needs both bids confirmed by the room
+  // (SG.Net only reports them once our own write was accepted); a rejected write leaves the auction in a
+  // visible "bidError" state with Retry / Main Menu, never a silent wait. One write in flight at a time.
+  function sendOnlineBid(a) {
+    a.phase = "waiting";                    // set first: the room may echo both bids synchronously
+    a.bidError = null;
+    const attempt = a.bidAttempt = (a.bidAttempt || 0) + 1;
+    renderAuctionDialog(false);
+    showAuctionScreen();
+    if (SG.Net && typeof SG.Net.submitBid === "function") {
+      SG.Net.submitBid(a.round, a.bids[state.humanSide] || 0, err => onOnlineBidWritten(a, attempt, err));
+    }
+    const pend = state.onlineBidsPending;
+    if (pend && pend.round === a.round && state.auction === a && a.phase === "waiting") {
+      state.onlineBidsPending = null;
+      applyOnlineBids(pend.round, pend.bids);
+    }
+  }
+  function onOnlineBidWritten(a, attempt, err) {
+    if (!err) return;                       // accepted: keep waiting for the opponent's confirmed bid
+    // Stale results (left the match, a newer attempt, or already revealed) change nothing.
+    if (state.mode !== "online" || state.auction !== a || !auctionActive() || a.bidAttempt !== attempt || a.phase !== "waiting") return;
+    a.phase = "bidError";
+    a.bidError = String(err);
+    renderAuctionDialog(false);
+    showAuctionScreen();
+    announcePlanClock(t("auction.errSubmit"));
+    if (dom.btnAuctionRetry && dom.btnAuctionRetry.focus) dom.btnAuctionRetry.focus();
+  }
+  function retryOnlineBid() {
+    const a = state.auction;
+    if (!auctionActive() || !a.online || a.phase !== "bidError") return false;   // never two writes in flight
+    sendOnlineBid(a);                       // the same sealed amount: a bid can't change once sealed
+    return true;
+  }
+  // Online: both sealed bids arrived from the room. Invalid values count as no bid — on both clients alike.
+  function applyOnlineBids(round, bids) {
+    const a = state.auction;
+    if (state.mode !== "online") return;
+    if (!auctionActive() || !a.online || a.round !== round || a.phase !== "waiting") {   // incl. "bidError": revealed only after a retry
+      if (round >= state.roundNumber) state.onlineBidsPending = { round, bids };
+      return;
+    }
+    for (const s of ["light", "dark"]) {
+      const v = normalizeBid(bids ? bids[s] : null, maxBidFor(s));
+      a.bids[s] = v == null ? 0 : v;
+    }
+    revealAuction();
+  }
+  function auctionBidText(side, a) {
+    const n = a.bids[side] || 0;
+    if (n > 0) return t("auction.revealBid", { side: sideLabel(side), n });
+    return t(a.timedOut[side] ? "auction.revealTimeout" : "auction.revealPass", { side: sideLabel(side) });
+  }
+  function auctionResultText(ini) {
+    if (ini.outcome === "light" || ini.outcome === "dark") {
+      const loser = otherSide(ini.outcome);
+      let s = t("auction.resultWon", { side: sideLabel(ini.outcome), n: ini.pay[ini.outcome] });
+      if (ini.pay[loser] > 0) s += " " + t("auction.resultLoser", { side: sideLabel(loser), n: ini.pay[loser] });
+      return s;
+    }
+    if (ini.outcome === "tie") return t("auction.resultTie", { n: ini.bids.light, side: sideLabel(ini.first), paid: ini.pay.light });
+    return t("auction.resultNone", { side: sideLabel(ini.first) });
+  }
+  function revealAuction() {
+    const a = state.auction;
+    stopAuctionClock();
+    const bids = { light: a.bids.light || 0, dark: a.bids.dark || 0 };
+    state.crystalBid = { light: bids.light, dark: bids.dark };
+    state.auctionDone = true;
+    // The round-start snapshots carry the revealed bids: Undo Round and the online re-sync never re-auction.
+    const h = state.history[state.history.length - 1];
+    if (h && h.roundNumber === state.roundNumber) { h.crystalBid = { light: bids.light, dark: bids.dark }; h.auctionDone = true; }
+    if (state.mode === "online" && onlineRoundSnap && onlineRoundSnap.roundNumber === state.roundNumber) {
+      onlineRoundSnap.crystalBid = { light: bids.light, dark: bids.dark };
+      onlineRoundSnap.auctionDone = true;
+    }
+    const ini = a.result = resolveInitiative(bids);
+    const anyBid = bids.light > 0 || bids.dark > 0;
+    const shown = a.asked.length > 0 || a.submitted || anyBid;
+    for (const s of ["light", "dark"]) if (a.timedOut[s]) logEvent(t("log.auctionTimeout", { side: sideLabel(s) }));
+    if (shown) logEvent(t("log.auctionReveal", {
+      lightSide: sideLabel("light"), light: bids.light, darkSide: sideLabel("dark"), dark: bids.dark, first: sideLabel(ini.first),
+    }));
+    if (!shown) { a.phase = "done"; hideAuctionUI(); enterPlanningTurn(); return; }   // nobody could bid: straight to planning
+    a.phase = "reveal";
+    state.scene = "auction";
+    setPlanControlsVisible(false);
+    if (dom.handoffScreen) dom.handoffScreen.classList.add("hidden");
+    renderAuctionDialog(false);
+    showAuctionScreen();
+    announcePlanClock(t("auction.revealTitle") + " — " + auctionBidText("light", a) + " · " + auctionBidText("dark", a) + ". " + auctionResultText(ini));
+    syncSidePanels();
+    refreshBanner();
+    if (dom.btnAuctionContinue && dom.btnAuctionContinue.focus) dom.btnAuctionContinue.focus();
+  }
+  function onAuctionContinue() {
+    const a = state.auction;
+    if (!auctionActive() || a.phase !== "reveal") return;   // exactly once
+    a.phase = "done";
+    hideAuctionUI();
+    enterPlanningTurn();                  // the planner's full configured turn starts only now
+  }
+
+  /* -- auction dialog (DOM) -- */
+  function showAuctionScreen() {
+    if (!dom.auctionScreen) return;
+    dom.auctionScreen.classList.remove("hidden");
+    if (dom.hud) dom.hud.inert = true;    // no board / plan-bar input while the auction is up
+  }
+  function hideAuctionScreen() {
+    if (dom.auctionScreen) dom.auctionScreen.classList.add("hidden");
+    if (dom.hud && !choiceOpen()) dom.hud.inert = false;
+  }
+  // Full cleanup (main menu, new match, opponent left, game over): no clock, no dialog.
+  function hideAuctionUI() {
+    stopAuctionClock();
+    hideAuctionScreen();
+    clearAuctionInput();
+  }
+  function showAuctionError(msg) { if (dom.auctionError) dom.auctionError.textContent = msg || ""; }
+  function clearAuctionInput() {
+    if (dom.auctionAmount) dom.auctionAmount.value = "";
+    if (dom.auctionOptions) dom.auctionOptions.innerHTML = "";
+    auctionOptionButtons = [];
+    showAuctionError("");
+  }
+  function syncAuctionPressed() {
+    const v = dom.auctionAmount ? String(dom.auctionAmount.value).trim() : "";
+    for (const o of auctionOptionButtons) setAttr(o.b, "aria-pressed", v === String(o.n) ? "true" : "false");
+  }
+  function selectAuctionAmount(n) {
+    const a = state.auction;
+    if (!auctionActive() || a.phase !== "bid" || auctionClockExpired()) return;
+    if (dom.auctionAmount) dom.auctionAmount.value = String(n);
+    showAuctionError("");
+    syncAuctionPressed();
+  }
+  function setHidden(el, hidden) { if (el) el.classList.toggle("hidden", !!hidden); }
+  function renderAuctionDialog(fresh) {
+    const a = state.auction;
+    if (!a || !dom.auctionScreen) return;
+    const bidding = a.phase === "bid", reveal = a.phase === "reveal";
+    const side = a.cur || state.humanSide;
+    setHidden(dom.auctionControls, !bidding);
+    setHidden(dom.auctionReveal, !reveal);
+    setHidden(dom.btnAuctionContinue, !reveal);
+    setHidden(dom.btnAuctionQuit, !(a.online && (bidding || a.phase === "waiting" || a.phase === "bidError")));
+    setHidden(dom.btnAuctionRetry, !(a.online && a.phase === "bidError"));
+    dom.auctionScreen.classList.toggle("side-light", bidding && side === "light");
+    dom.auctionScreen.classList.toggle("side-dark", bidding && side === "dark");
+    const untimedNote = a.online ? "<br>" + t("auction.onlineUntimed") : "";
+    if (bidding) {
+      const max = maxBidFor(side);
+      const keep = fresh ? "0" : (dom.auctionAmount ? dom.auctionAmount.value : "0");
+      if (dom.auctionTitle) dom.auctionTitle.textContent = t("auction.title", { side: sideLabel(side) });
+      if (dom.auctionSub) dom.auctionSub.innerHTML = t("auction.sub", { have: state.crystals[side] || 0, max }) + untimedNote;
+      if (dom.auctionOptions) {
+        dom.auctionOptions.innerHTML = "";
+        setAttr(dom.auctionOptions, "aria-label", t("auction.quick"));
+      }
+      auctionOptionButtons = [];
+      for (const n of auctionQuickAmounts(max)) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn btn-ghost auction-option";
+        const allIn = n > 5 * BID_STEP;
+        b.textContent = allIn ? t("auction.allIn", { n }) : `${n}◆`;
+        setAttr(b, "aria-label", t("auction.optionAria", { n }));
+        b.addEventListener("click", () => selectAuctionAmount(n));
+        if (dom.auctionOptions) dom.auctionOptions.appendChild(b);
+        auctionOptionButtons.push({ b, n });
+      }
+      if (dom.auctionAmount) {
+        dom.auctionAmount.min = "0"; dom.auctionAmount.step = String(BID_STEP); dom.auctionAmount.max = String(max);
+        dom.auctionAmount.value = keep;
+      }
+      if (dom.auctionCustomLabel) dom.auctionCustomLabel.textContent = t("auction.custom", { max });
+      if (dom.btnAuctionPass) dom.btnAuctionPass.textContent = t("auction.pass");
+      if (dom.btnAuctionLock) dom.btnAuctionLock.textContent = t("auction.lock");
+      if (fresh) showAuctionError("");
+      syncAuctionPressed();
+    } else if (a.phase === "waiting") {
+      if (dom.auctionTitle) dom.auctionTitle.textContent = t("auction.waitingTitle");
+      if (dom.auctionSub) dom.auctionSub.innerHTML = t(a.autoPass ? "auction.waitingNoFunds" : "auction.waiting") + untimedNote;
+    } else if (a.phase === "bidError") {
+      if (dom.auctionTitle) dom.auctionTitle.textContent = t("auction.errSubmitTitle");
+      if (dom.auctionSub) dom.auctionSub.textContent = t("auction.errSubmit");
+      if (dom.btnAuctionRetry) dom.btnAuctionRetry.textContent = t("auction.retry");
+    } else if (reveal) {
+      const ini = a.result || resolveInitiative(a.bids);
+      if (dom.auctionTitle) dom.auctionTitle.textContent = t("auction.revealTitle");
+      if (dom.auctionSub) dom.auctionSub.innerHTML = "";
+      if (dom.auctionReveal) {
+        dom.auctionReveal.innerHTML = "";
+        for (const line of [auctionBidText("light", a), auctionBidText("dark", a), auctionResultText(ini)]) {
+          const p = document.createElement("p");
+          p.textContent = line;
+          dom.auctionReveal.appendChild(p);
+        }
+      }
+      if (dom.btnAuctionContinue) {
+        dom.btnAuctionContinue.textContent = state.mode === "hotseat"
+          ? t("auction.continueHotseat", { side: sideLabel(state.planningSide) })
+          : t("auction.continue");
+      }
+    }
+  }
+
+  /* -- auction clock: distinct from the planning clock (own state field, generation and DOM) -- */
+  function auctionTimerEnabled() { return !!state && state.mode !== "online"; }
+  function auctionClockExpired() {
+    const c = state && state.auctionClock;
+    return !!c && monotonicNow() >= c.deadline;
+  }
+  function renderAuctionClock(now, force) {
+    const el = dom.auctionTimer;
+    if (!el) return;
+    const c = state && state.auctionClock;
+    if (!c) {
+      if (force || !el.classList.contains("hidden")) { el.classList.add("hidden"); el.classList.remove("warn"); el.textContent = ""; }
+      return;
+    }
+    const sec = planClockSecondsLeft(c, now);
+    if (!force && sec === c.shownSec) return;
+    c.shownSec = sec;
+    el.textContent = t("timer.label", { time: formatClock(sec) });
+    el.classList.toggle("warn", sec <= AUCTION_WARN_SECONDS);
+    el.classList.toggle("calm", !!state.reduceMotion);
+    el.classList.remove("hidden");
+  }
+  function stopAuctionClock() {
+    if (!state) return;
+    state.auctionClock = null;
+    renderAuctionClock(0, true);
+  }
+  function startAuctionClock(side) {
+    const a = state.auction;
+    if (!auctionTimerEnabled() || !auctionActive() || a.phase !== "bid" || a.cur !== side) { stopAuctionClock(); return; }
+    const now = monotonicNow();
+    state.auctionClock = {
+      kind: "auction", gen: ++auctionClockGen, auctionGen: a.gen, side, round: a.round, seconds: AUCTION_SECONDS,
+      startedAt: now, deadline: now + AUCTION_SECONDS * 1000, fired: false, warned: false, shownSec: -1,
+    };
+    renderAuctionClock(now, true);
+    announcePlanClock(t("auction.timerStart", { side: sideLabel(side), n: AUCTION_SECONDS }));
+  }
+  // Called every animation frame with its timestamp.
+  function tickAuctionClock(now) {
+    const c = state.auctionClock;
+    if (!c) return;
+    const a = state.auction;
+    if (!auctionActive() || a.gen !== c.auctionGen || a.phase !== "bid" || a.cur !== c.side) { stopAuctionClock(); return; }   // safety net
+    renderAuctionClock(now, false);
+    const sec = planClockSecondsLeft(c, now);
+    if (!c.warned && sec > 0 && sec <= AUCTION_WARN_SECONDS) { c.warned = true; announcePlanClock(t("timer.warn", { n: sec })); }
+    if (c.fired || now < c.deadline) return;
+    c.fired = true;
+    expireAuctionClock(c.gen);
+  }
+  // Time's up: the bidder silently passes (0◆), sealed exactly once; the reveal says it timed out.
+  function expireAuctionClock(gen) {
+    const c = state.auctionClock;
+    if (!c || c.gen !== gen) return false;
+    const a = state.auction;
+    if (!auctionActive() || a.gen !== c.auctionGen || a.phase !== "bid" || a.cur !== c.side) { stopAuctionClock(); return false; }
+    return lockAuctionBid(c.side, "0", "timeout");
   }
 
   function aegisStr(side) {
@@ -2570,7 +3160,7 @@
       t.innerHTML = `<span class="choice-label">${o.label}</span>${o.desc ? `<span class="choice-desc">${o.desc}</span>` : ""}`;
       b.appendChild(t);
       if (o.badge) { const g = document.createElement("span"); g.className = "choice-badge"; g.textContent = o.badge; b.appendChild(g); }
-      b.addEventListener("click", () => { closeChoice(); o.onPick(); });
+      b.addEventListener("click", () => { if (planClockExpired()) return; closeChoice(); o.onPick(); });   // too late: the next frame seals the turn
       dom.choiceOptions.appendChild(b);
     }
     dom.choiceCancel.textContent = opts.cancelLabel || t("choice.cancel");
@@ -2599,53 +3189,6 @@
         disabled: !room || have < o.cost,
         onPick: () => { state.summonArmed = o.type; clearSelection(); updatePlanBar(); },
       })),
-    });
-  }
-  function openBidChoice() {
-    const side = state.planningSide;
-    const have = state.crystals[side] || 0;
-    const maxMultiplier = Math.floor(have / 20);
-    const maxBid = maxMultiplier * 20;
-    const currentBid = (state.crystalBid && state.crystalBid[side]) || 0;
-    const setBid = bid => {
-      state.crystalBid[side] = bid;
-      updatePlanBar();
-    };
-    const options = [{
-      label: t("bid.zero"), desc: t("bid.zeroDesc"), badge: "0◆",
-      onPick: () => setBid(0),
-    }];
-    if (maxMultiplier >= 1) {
-      for (let x = 1; x <= Math.min(5, maxMultiplier); x++) {
-        const amount = x * 20;
-        options.push({
-          label: t("bid.amount", { n: amount, x }),
-          desc: t("bid.amountDesc", { n: amount, x }),
-          badge: `${amount}◆`,
-          onPick: () => setBid(amount),
-        });
-      }
-      if (maxMultiplier > 5) options.push({
-        label: t("bid.allIn", { n: maxBid }), desc: t("bid.amountDesc", { n: maxBid, x: maxMultiplier }), badge: `${maxBid}◆`,
-        onPick: () => setBid(maxBid),
-      });
-    }
-    options.push({
-      label: t("bid.custom"), desc: t("bid.customDesc", { max: maxBid }),
-      onPick: () => {
-        const raw = window.prompt(t("bid.prompt", { max: maxBid, maxX: maxMultiplier }), currentBid ? currentBid / 20 : "");
-        if (raw == null || raw.trim() === "") return;
-        const number = Number(raw);
-        if (!Number.isFinite(number) || number < 0) return;
-        if (number === 0) { setBid(0); return; }
-        const x = number >= 20 && number % 20 === 0 ? Math.floor(number / 20) : Math.floor(number);
-        if (x >= 1) setBid(Math.min(x * 20, maxBid));
-      },
-    });
-    openChoice({
-      title: t("bid.title"),
-      sub: t("bid.sub", { have, current: currentBid }),
-      options,
     });
   }
   function openReaperChoice() {
@@ -2745,9 +3288,11 @@
     dom.btnSummon.classList.toggle("ward-on", !!state.summonArmed);
     dom.btnSummon.textContent = state.summonArmed ? t("btn.placing", { piece: pieceName(state.summonArmed) }) : t("btn.summon");
     if (dom.btnBid) {
+      // Read-only: the bid was sealed in this round's auction, before planning — no second bid here.
       const bid = (state.crystalBid && state.crystalBid[side]) || 0;
-      dom.btnBid.textContent = t("btn.bid", { n: bid });
-      dom.btnBid.title = t("title.bid");
+      dom.btnBid.textContent = t("btn.bidLocked", { n: bid });
+      dom.btnBid.title = t("title.bidLocked");
+      dom.btnBid.disabled = true;
       dom.btnBid.classList.toggle("ward-on", bid > 0);
     }
     refreshBanner();
@@ -2790,7 +3335,12 @@
     state.planningSide = state.mode === "bot" ? state.humanSide : "light";
     clearSelection();
     logEvent(t("log.revert"));
+    hideAuctionUI();
+    state.auction = null;
     refreshBanner(); updatePlanBar(); syncSidePanels();
+    // One auction per round: the restored round keeps the bids revealed for it (snapshot auctionDone).
+    if (!state.auctionDone) { beginAuction(); return; }
+    startPlanClock();                                       // the round is re-planned from scratch: a fresh turn
   }
 
   function cancelReaperChoice() { state.pendingReaperStrike = null; updatePlanBar(); }
@@ -2820,6 +3370,7 @@
 
   canvas.addEventListener("click", (evt) => {
     if (state.scene !== "planning") return;
+    if (planClockExpired()) return;                 // time's up: the next frame seals the plan as it stands
     if (choiceOpen() || performance.now() - choiceClosedAt < 350) return;   // stray click from the pop-up
     // in bot mode, only the human side plans manually
     if (state.mode === "bot" && state.planningSide !== state.humanSide) return;
@@ -2892,7 +3443,23 @@
     clearSelection(); updatePlanBar();
     if (!wasArmed) openSummonChoice();          // clicking while placing simply cancels the placement
   });
-  if (dom.btnBid) dom.btnBid.addEventListener("click", () => { if (!planningLocked()) openBidChoice(); });
+  // (#btnBid is a read-only display of the auction-sealed bid; bidding happens in the pre-planning auction.)
+  if (dom.btnAuctionPass) dom.btnAuctionPass.addEventListener("click", () => { if (state.auction) lockAuctionBid(state.auction.cur, "0", "manual"); });
+  if (dom.btnAuctionLock) dom.btnAuctionLock.addEventListener("click", () => {
+    if (state.auction) lockAuctionBid(state.auction.cur, dom.auctionAmount ? dom.auctionAmount.value : "", "manual");
+  });
+  if (dom.auctionAmount) {
+    dom.auctionAmount.addEventListener("input", () => { showAuctionError(""); syncAuctionPressed(); });
+    dom.auctionAmount.addEventListener("keydown", (e) => {
+      if (e && e.key === "Enter") {
+        if (e.preventDefault) e.preventDefault();
+        if (state.auction) lockAuctionBid(state.auction.cur, dom.auctionAmount.value, "manual");
+      }
+    });
+  }
+  if (dom.btnAuctionContinue) dom.btnAuctionContinue.addEventListener("click", () => onAuctionContinue());
+  if (dom.btnAuctionQuit) dom.btnAuctionQuit.addEventListener("click", () => { if (auctionActive() && state.auction.online) showStart(); });
+  if (dom.btnAuctionRetry) dom.btnAuctionRetry.addEventListener("click", () => retryOnlineBid());
   dom.choiceCancel.addEventListener("click", () => cancelChoice());
   dom.choiceScreen.addEventListener("click", (e) => { if (e.target === dom.choiceScreen) cancelChoice(); });  // backdrop
   document.addEventListener("keydown", (e) => {
@@ -2984,6 +3551,8 @@
     saveStore("sg.options", o);
     // apply live to the current match
     state.reduceMotion = o.reduceMotion; state.colorGlyphs = o.colorGlyphs; state.battleSpeed = o.battleSpeed;
+    if (state.planClock) renderPlanClock(monotonicNow(), true);   // Reduce Motion applies to the running countdown at once
+    if (state.auctionClock) renderAuctionClock(monotonicNow(), true);
     if (dom.optSpeedVal) dom.optSpeedVal.textContent = o.battleSpeed + "×";
   }
   function openOptions() { syncOptionsUI(); dom.optionsScreen.classList.remove("hidden"); }
@@ -3103,6 +3672,8 @@
       if (state.mode === "online" && !state.isReplay && state.scene === "planning" && round === state.roundNumber) resolveOnlineRound(plans);
       else state.onlinePending = { round, plans };
     };
+    // Sealed pre-planning bids: both are in → reveal (or queue it if we're not at that auction yet).
+    SG.Net.onBothBids = (round, bids) => applyOnlineBids(round, bids);
     SG.Net.onOpponentLeft = () => onlineOpponentLeft();
   }
   if (dom.btnOnline) dom.btnOnline.addEventListener("click", openOnline);
@@ -3127,7 +3698,7 @@
   });
   if (dom.btnMirror) dom.btnMirror.addEventListener("click", () => { refreshMirror(); dom.mirrorScreen.classList.remove("hidden"); });
   if (dom.btnMirrorClose) dom.btnMirrorClose.addEventListener("click", () => dom.mirrorScreen.classList.add("hidden"));
-  function planningLocked() { return state.scene !== "planning" || choiceOpen() || (state.mode === "online" && state.onlineWaiting); }
+  function planningLocked() { return state.scene !== "planning" || choiceOpen() || planClockExpired() || (state.mode === "online" && state.onlineWaiting); }
   dom.btnUndo.addEventListener("click", () => {
     if (planningLocked()) return;
     undoLast(); clearSelection(); syncSidePanels(); updatePlanBar();
@@ -3135,21 +3706,32 @@
   dom.btnClear.addEventListener("click", () => {
     if (planningLocked()) return;
     while (state.undoStack.length) undoLast();       // reverts this turn's summons and wards too
-    state.plan[state.planningSide] = [];
-    state.crystalBid[state.planningSide] = 0;
+    state.plan[state.planningSide] = [];            // (the auction-sealed bid stands)
     clearSelection(); syncSidePanels(); updatePlanBar();
   });
   dom.btnValidate.addEventListener("click", () => onValidate());
-  dom.btnHandoffReady.addEventListener("click", () => onHandoffReady());
+  dom.btnHandoffReady.addEventListener("click", () => {
+    if (state.scene === "auction") onAuctionHandoffReady();   // the auction's private pass-device screen
+    else onHandoffReady();
+  });
   dom.btnQuit.addEventListener("click", () => showStart());
   dom.btnMainMenu.addEventListener("click", () => showStart());
   dom.btnPlayAgain.addEventListener("click", () => {
     if (state.runOutcome) startDescent();
     else if (state.scenario && !state.scenario.daily) startTrial(state.scenario);
-    else startMatch(state.mode, state.humanSide, state.furiesEnabled, { movesPerRound: state.movesPerRound, harrowerDrag: state.harrowerDragEnabled });
+    else startMatch(state.mode, state.humanSide, state.furiesEnabled, { movesPerRound: state.movesPerRound, harrowerDrag: state.harrowerDragEnabled, planSeconds: state.planSeconds });
   });
   dom.btnHotseat.addEventListener("click", () => {  startMatch("hotseat", "light", dom.furyToggle && dom.furyToggle.checked, { harrowerDrag: dom.harrowerToggle && dom.harrowerToggle.checked }); });
   dom.btnVsBot.addEventListener("click", () => {  startMatch("bot", "dark", dom.furyToggle && dom.furyToggle.checked, { harrowerDrag: dom.harrowerToggle && dom.harrowerToggle.checked }); });
+  // Turn-timer choice (20 / 60 / 90 s, default 60) is remembered like the piece theme.
+  if (dom.planSeconds) {
+    dom.planSeconds.value = String(normalizePlanSeconds(loadStore(PLAN_SECONDS_KEY, PLAN_SECONDS_DEFAULT)));
+    dom.planSeconds.addEventListener("change", () => {
+      const v = normalizePlanSeconds(dom.planSeconds.value);
+      dom.planSeconds.value = String(v);
+      saveStore(PLAN_SECONDS_KEY, v);
+    });
+  }
 
   /* ============================================================
    * SCENE MANAGEMENT
@@ -3176,6 +3758,9 @@
 
   function showStart() {
     state.scene = "start";
+    stopPlanClock();
+    hideAuctionUI();
+    state.auction = null;
     refreshHallRecord();
     dom.startScreen.classList.remove("hidden");
     dom.hud.classList.add("hidden");
@@ -3226,6 +3811,7 @@
     state.mode = mode;
     state.humanSide = humanSide;
     state.movesPerRound = opts.movesPerRound != null ? opts.movesPerRound : (dom.movesPerRound ? parseInt(dom.movesPerRound.value, 10) || 3 : 3);
+    state.planSeconds = normalizePlanSeconds(opts.planSeconds != null ? opts.planSeconds : (dom.planSeconds ? dom.planSeconds.value : PLAN_SECONDS_DEFAULT));
     state.furiesEnabled = !!furiesEnabled;
     // Explicit option wins; Descent runs and Trials keep their canonical drag (on) unless overridden;
     // custom matches follow the start-screen checkbox.
@@ -3280,6 +3866,7 @@
     dom.gameOverScreen.classList.add("hidden");
     dom.handoffScreen.classList.add("hidden");
     if (dom.trialsScreen) dom.trialsScreen.classList.add("hidden");
+    hideAuctionUI();
     dom.hud.classList.remove("hidden");
     beginPlanningPhase();
     syncSidePanels();
@@ -3311,8 +3898,10 @@
     const adt = Math.min((ts - lastAmbientTs) / 1000 || 0, 0.05);
     lastAmbientTs = ts;
     updateAmbientParticles(adt);
-    if (state.scene === "battle" || state.scene === "planning") update(ts);
+    if (state.scene === "battle" || state.scene === "planning" || state.scene === "auction") update(ts);
     else state.lastTs = ts;
+    tickPlanClock(ts);
+    tickAuctionClock(ts);
     if (P) perfSeg.update += perfNow() - updateStart;
     render(ts);
     if (P && perf.on) perfRecordFrame(ts, currentFigureTheme().id);
@@ -3338,6 +3927,12 @@
       dom.btnHandoffReady.textContent = t("handoff.ready", { side: sideLabel(state.handoffTo) });
     }
     refreshBanner();
+    if (state.planClock) renderPlanClock(performance.now(), true);   // countdown label follows the language
+    if (auctionActive()) {
+      if (state.auction.phase === "handoff") renderAuctionHandoff();
+      else renderAuctionDialog(false);                   // keeps the typed amount
+      if (state.auctionClock) renderAuctionClock(performance.now(), true);
+    }
     if (!dom.gameOverScreen.classList.contains("hidden")) showGameOver();
     if (dom.trialsScreen && !dom.trialsScreen.classList.contains("hidden")) populateTrials();
     if (dom.mirrorScreen && !dom.mirrorScreen.classList.contains("hidden")) refreshMirror();

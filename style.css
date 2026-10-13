@@ -298,6 +298,47 @@ html, body {
 .turn-banner.side-dark { color: var(--ember); border-color: rgba(232,98,44,0.5); }
 .turn-banner.note { color: var(--gold); border-color: rgba(232,198,87,0.7); box-shadow: 0 0 12px rgba(232,198,87,0.18); }
 
+/* Banner row: the turn banner plus the planning countdown (shown only while a human's clock runs). */
+.banner-row {
+  width: var(--board-size);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.banner-row .turn-banner { width: auto; flex: 1 1 auto; min-width: 0; }
+.turn-timer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--bone);
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  transition: color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.turn-timer.hidden { display: none; }
+.turn-timer.side-light { border-color: rgba(111,184,255,0.5); }
+.turn-timer.side-dark { border-color: rgba(232,98,44,0.5); }
+.turn-timer.warn {
+  color: #ff6a5c;
+  border-color: rgba(255,106,92,0.85);
+  box-shadow: 0 0 12px rgba(255,106,92,0.35);
+  animation: timerWarnPulse 1s ease-in-out infinite;
+}
+@keyframes timerWarnPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) { .turn-timer.warn { animation: none; } }
+.turn-timer.warn.calm { animation: none; }   /* in-game Reduce Motion option */
+.timer-note { margin-top: -6px; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
 @keyframes boardGlow {
   0%, 100% { box-shadow: 0 0 50px rgba(0,0,0,0.7), 0 0 0 1px var(--panel-border), 0 0 22px rgba(216,179,76,0.08); }
   50% { box-shadow: 0 0 60px rgba(0,0,0,0.7), 0 0 0 1px rgba(216,179,76,0.5), 0 0 34px rgba(216,179,76,0.18); }
@@ -531,3 +572,27 @@ html[lang="ar"] body { line-height: 1.6; }
 html[lang^="zh"] .title, html[lang^="zh"] .help-body h2, html[lang^="zh"] .choice-title { letter-spacing: 0.04em; }
 /* Codes and numbers stay left-to-right inside an RTL page. */
 [dir="rtl"] .room-code, [dir="rtl"] .online-code-input { direction: ltr; unicode-bidi: isolate; }
+
+/* ---------- Initiative auction (sealed bids before planning) ---------- */
+.auction-overlay { z-index: 20; }
+.auction-inner { max-width: 470px; }
+.auction-inner .hidden { display: none; }
+.auction-overlay.side-light .auction-inner { border-color: rgba(111,184,255,0.55); }
+.auction-overlay.side-dark .auction-inner { border-color: rgba(232,98,44,0.55); }
+.auction-timer { align-self: center; justify-content: center; margin: 0 0 12px; }
+.auction-controls { display: flex; flex-direction: column; gap: 10px; }
+.auction-options { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.auction-option { width: auto; min-width: 64px; padding: 6px 12px; flex: 0 0 auto; }
+.auction-option[aria-pressed="true"] { color: var(--gold); border-color: var(--gold); box-shadow: 0 0 10px rgba(232,198,87,0.3); }
+.auction-option:focus-visible, .auction-custom input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.auction-custom { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.9em; color: #c7bcd4; flex-wrap: wrap; }
+.auction-custom input {
+  width: 7em; padding: 5px 8px; border-radius: 6px; font: inherit; font-variant-numeric: tabular-nums;
+  color: #f0e6d2; background: rgba(0,0,0,0.35); border: 1px solid var(--panel-border);
+}
+.auction-error { min-height: 1.2em; margin: 0; font-size: 0.82em; color: #ff8a7c; text-align: center; }
+.auction-error:empty { min-height: 0; }
+.auction-reveal { margin: 0 0 12px; text-align: center; }
+.auction-reveal p { margin: 4px 0; color: #f0e6d2; }
+.auction-reveal p:last-child { color: var(--gold); margin-top: 10px; }
+#btnBid:disabled { opacity: 0.8; }   /* read-only: shows the bid sealed in this round's auction */

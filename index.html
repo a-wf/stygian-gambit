@@ -47,6 +47,13 @@
             <option value="5">5</option>
           </select>
         </label>
+        <label><span data-i18n="start.planTimer">Turn timer</span>
+          <select id="planSeconds">
+            <option value="20" data-i18n="timer.opt20">20 s</option>
+            <option value="60" selected data-i18n="timer.opt60">60 s</option>
+            <option value="90" data-i18n="timer.opt90">90 s</option>
+          </select>
+        </label>
         <label><span data-i18n="start.difficulty">Difficulty</span>
           <select id="difficulty">
             <option value="easy" data-i18n="difficulty.easy">Easy</option>
@@ -68,6 +75,7 @@
           <select id="themeSelect" class="theme-select"></select>
         </label>
       </div>
+      <p class="rules-note timer-note" data-i18n-html="start.planTimerNote"></p>
 
       <div class="mode-row">
         <button id="btnHotseat" class="btn btn-primary" data-i18n="btn.hotseat">Local Duel (1v1)</button>
@@ -90,8 +98,15 @@
     </div>
   </div>
 
+  <!-- Turn-clock announcements live outside #hud: the HUD goes inert while a pop-up is open,
+       and an inert live region would stay silent. -->
+  <div id="turnTimerLive" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
   <div id="hud" class="hidden">
-    <div id="turnBanner" class="turn-banner"></div>
+    <div class="banner-row">
+      <div id="turnBanner" class="turn-banner"></div>
+      <div id="turnTimer" class="turn-timer hidden" role="timer" aria-atomic="true"></div>
+    </div>
     <div class="board-area">
       <div class="board-wrap">
         <canvas id="board" width="560" height="560"></canvas>
@@ -99,7 +114,7 @@
       <div id="boardActions" class="board-actions hidden">
         <button id="btnSummon" class="btn btn-ghost" data-i18n="btn.summon">Summon…</button>
         <button id="btnWard" class="btn btn-ghost">Ward: Off</button>
-        <button id="btnBid" class="btn btn-ghost" data-i18n-title="title.bid">Initiative: 0◆</button>
+        <button id="btnBid" class="btn btn-ghost" data-i18n-title="title.bidLocked" disabled>Initiative: 0◆ 🔒</button>
         <button id="btnValidate" class="btn btn-primary" data-i18n="btn.validate">Validate ▶</button>
       </div>
     </div>
@@ -151,6 +166,34 @@
     </div>
   </div>
 
+  <!-- Initiative auction: one sealed bid per side at the start of each round, before planning. -->
+  <div id="auctionScreen" class="overlay auction-overlay hidden">
+    <div class="overlay-inner choice-inner auction-inner" role="dialog" aria-modal="true" aria-labelledby="auctionTitle" aria-describedby="auctionSub">
+      <h2 class="choice-title" id="auctionTitle"></h2>
+      <p class="choice-sub" id="auctionSub"></p>
+      <div id="auctionTimer" class="turn-timer auction-timer hidden" role="timer" aria-atomic="true"></div>
+      <div id="auctionControls" class="auction-controls">
+        <div id="auctionOptions" class="auction-options" role="group"></div>
+        <label class="auction-custom"><span id="auctionCustomLabel"></span>
+          <input id="auctionAmount" type="number" inputmode="numeric" min="0" step="20" autocomplete="off">
+        </label>
+        <p id="auctionError" class="auction-error" role="alert"></p>
+        <div class="mode-row">
+          <button type="button" id="btnAuctionPass" class="btn btn-ghost" data-i18n="auction.pass">No bid (pass)</button>
+          <button type="button" id="btnAuctionLock" class="btn btn-primary" data-i18n="auction.lock">Seal bid</button>
+        </div>
+      </div>
+      <div id="auctionReveal" class="auction-reveal hidden"></div>
+      <div class="mode-row">
+        <button type="button" id="btnAuctionContinue" class="btn btn-primary hidden" data-i18n="auction.continue">Start planning</button>
+        <!-- Online only: the opponent may take a while to bid (untimed), so leaving stays possible. -->
+        <!-- Online only: shown when the room rejected our sealed bid (same amount is re-sent). -->
+        <button type="button" id="btnAuctionRetry" class="btn btn-primary hidden" data-i18n="auction.retry">Retry sending bid</button>
+        <button type="button" id="btnAuctionQuit" class="btn btn-ghost hidden" data-i18n="btn.quit">Main Menu</button>
+      </div>
+    </div>
+  </div>
+
   <div id="choiceScreen" class="overlay choice-overlay hidden">
     <div class="overlay-inner choice-inner" role="dialog" aria-modal="true" aria-labelledby="choiceTitle">
       <h2 class="choice-title" id="choiceTitle"></h2>
@@ -164,6 +207,7 @@
     <div class="overlay-inner">
       <h1 class="title" data-i18n="online.title">ONLINE DUEL</h1>
       <p class="subtitle" data-i18n="online.subtitle">Play the same match live across two computers.</p>
+      <p class="rules-note" data-i18n="online.untimed">Online duels are untimed — the turn timer applies to local and bot matches.</p>
       <div id="onlineStatus" class="online-status"></div>
       <div id="onlineSetup">
         <div class="online-block">

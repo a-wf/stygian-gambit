@@ -22,10 +22,9 @@
   }
 
   SG.AI = {
-    // Plans one round for `side` using only the visible board (never the opponent's hidden plan).
-    // Difficulty sets how many pieces act + how sharply; persona reweights priorities.
-    // Returns { commands: [...], wards: [pieceId...], bid }.
-    planTurn(side, requestedDiff) {
+    // The Warden's sealed initiative bid for the pre-planning auction. Public information only
+    // (its own crystals, the alternating order, difficulty) — never the opponent's bid.
+    planBid(side, requestedDiff) {
       const S = SG.state;
       const diff = requestedDiff || S.difficulty || "normal";
       const maxBotX = Math.floor((S.crystals[side] || 0) / 20);
@@ -34,6 +33,16 @@
         if (diff === "hard") bid = 20;
         else if (diff === "unfair") bid = maxBotX >= 2 ? 40 : 20;
       }
+      return bid;
+    },
+
+    // Plans one round for `side` using only the visible board (never the opponent's hidden plan).
+    // Difficulty sets how many pieces act + how sharply; persona reweights priorities.
+    // Returns { commands: [...], wards: [pieceId...], bid }.
+    planTurn(side, requestedDiff) {
+      const S = SG.state;
+      const diff = requestedDiff || S.difficulty || "normal";
+      const bid = SG.AI.planBid(side, diff);   // (the game seals the bid in the auction; kept for compatibility)
       const P = personaFor(S.botPersona);
       const baseMoves = (S.movesPerRound != null) ? S.movesPerRound : 3;
       let maxCmd = diff === "easy" ? Math.max(1, baseMoves - 2)
