@@ -4,6 +4,20 @@ window.SG.I18N_DICT.zh = {
   "doc.title": "Stygian Gambit",
   "lang.label": "语言",
 
+  "btn.spectator": "观战：电脑对电脑",
+  "banner.spectator": "观战中 · 第 {round} 回合",
+  "log.spectator": "电脑对电脑 · {persona} · {difficulty} · 仅供观战",
+  "fate.heading": "命运种子",
+  "fate.hint": "分享一段代码，从相同的开局，走向不同的结局。",
+  "fate.codeLabel": "种子代码",
+  "fate.new": "新的命运",
+  "fate.play": "挑战命运",
+  "fate.invalid": "请输入 SG1-，后接 1–12 位英文字母或数字（A–Z、0–9）。",
+  "fate.trialTitle": "命运 {code}",
+  "fate.seedLabel": "分享此开局：{code}",
+  "over.fateWon": "命运已破 · {code}",
+  "over.fateLost": "命运未改 · {code}",
+
   /* ---- sides, pieces ---- */
   "side.light": "幽影",
   "side.dark": "余烬",

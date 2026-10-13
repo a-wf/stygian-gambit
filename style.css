@@ -84,6 +84,31 @@ html, body {
   font-style: italic;
 }
 
+.fate-seeds {
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: rgba(47, 198, 214, 0.04);
+}
+.fate-seeds h2 { margin: 0 0 6px; color: var(--gold); font-size: 1.2em; }
+.fate-seeds p { margin: 0 0 12px; font-size: 0.85em; color: #b9aec2; }
+.fate-seeds label { display: block; margin-bottom: 6px; font-size: 0.85em; }
+#fateCode {
+  width: min(100%, 280px);
+  padding: 10px;
+  color: var(--bone);
+  background: var(--obsidian);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  font: 1em monospace;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+#fateCode:focus-visible { outline: 2px solid var(--umbra); outline-offset: 3px; }
+#fateCode[aria-invalid="true"] { border-color: var(--ember); }
+.fate-status { color: #ffa69b; font-size: 0.85em; }
+
 .legend {
   display: grid;
   grid-template-columns: 1fr 1fr;

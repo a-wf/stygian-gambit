@@ -292,7 +292,11 @@
   function pieceName(type) { return t("piece." + type); }
   function otherSide(side) { return side === "light" ? "dark" : "light"; }
   function describePiece(p) { return t("who", { side: sideLabel(p.side), piece: pieceName(p.type) }); }
-  function scenarioName(sc) { const n = t("scenario." + sc.id + ".name"); return sc.daily ? t("daily.name", { name: n }) : n; }
+  function scenarioName(sc) {
+    if (sc.fateCode) return t("fate.trialTitle", { code: sc.fateCode });
+    const n = t("scenario." + sc.id + ".name");
+    return sc.daily ? t("daily.name", { name: n }) : n;
+  }
   function hexToRgba(hex, a) {
     const v = hex.replace("#", "");
     const r = parseInt(v.substring(0, 2), 16), g = parseInt(v.substring(2, 4), 16), b = parseInt(v.substring(4, 6), 16);
@@ -725,7 +729,7 @@
   }
 
   function onValidate() {
-    if (state.scene !== "planning") return;
+    if (state.scene !== "planning" || state.mode === "spectator") return;
     if (choiceOpen()) return;                       // a pending choice must be answered or cancelled first
     resetTurnTransients();
     if (state.mode === "online") {
@@ -773,6 +777,7 @@
     refreshBanner();
   }
   function onHandoffReady() {
+    if (state.mode === "spectator") return;  // bot-vs-bot never passes the device
     if (state.scene !== "handoff") return;   // a stray second "Ready" must not restart the next side's clock
     dom.handoffScreen.classList.add("hidden");
     state.planningSide = state.handoffTo;
@@ -813,6 +818,8 @@
     clearSelection();
     if (!state.isReplay) { state.history.push(snapshotState()); if (state.history.length > 14) state.history.shift(); }
     if (state.mode === "online") { onlineRoundSnap = snapshotState(); onlineRoundIds = new Set(state.pieces.filter(p => p.alive).map(p => p.id)); }
+    // Spectator (bot vs bot): no auction dialog and no clocks — both bots plan (and bid) at once, then battle.
+    if (state.mode === "spectator") { runSpectatorRound(); return; }
     // The initiative auction comes first; it enters the planning turn itself once the bids are revealed
     // (straight away when nobody can afford a bid). The planning clock starts only then, in full.
     beginAuction();
@@ -824,7 +831,21 @@
     refreshBanner();
     updatePlanBar();
     syncSidePanels();
+    if (state.mode === "spectator") { runSpectatorRound(); return; }   // defensive: spectators never plan by hand
     startPlanClock();
+  }
+
+  // Bot vs bot: both sides are planned by the AI (bids included, as no auction ran) and the clash starts.
+  function runSpectatorRound() {
+    stopPlanClock();
+    state.scene = "planning";
+    refreshBanner();
+    updatePlanBar();
+    syncSidePanels();
+    applyAIPlan("light", state.difficulty);
+    applyAIPlan("dark", state.difficulty);
+    state.planLocked = { light: true, dark: true };
+    beginBattle(state.lastTs);
   }
 
   /* ============================================================
@@ -1241,8 +1262,10 @@
     if (state.scenario) {
       // Trial / Daily outcome — separate progression, not the standard-duel record.
       state.trialResult = { id: state.scenario.id, won, rounds: state.roundNumber + 1, daily: !!state.scenario.daily };
-      if (won && !state.scenario.daily) { const t = loadStore("sg.trials", {}); t[state.scenario.id] = true; saveStore("sg.trials", t); }
+      if (won && !state.scenario.daily && !state.scenario.fateCode) { const t = loadStore("sg.trials", {}); t[state.scenario.id] = true; saveStore("sg.trials", t); }
       if (state.scenario.daily) recordDaily(won);
+      state.lastRecord = null;
+    } else if (state.mode === "spectator") {
       state.lastRecord = null;
     } else {
       const perspective = state.mode === "bot" ? state.humanSide : (winnerSide || "light");
@@ -1411,8 +1434,70 @@
   }
 
   /* ---- Trials + Daily Gambit launchers ---- */
-  function startTrial(scenario) {  startMatch("bot", scenario.humanSide, scenario.furies, { scenario }); }
   function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  function canonicalizeFateCode(code) {
+    if (typeof code !== "string") return null;
+    const trimmed = code.trim();
+    return /^SG1-[A-Z0-9]{1,12}$/i.test(trimmed) ? trimmed.toUpperCase() : null;
+  }
+  function buildFateScenario(code) {
+    const canonical = canonicalizeFateCode(code);
+    if (!canonical) return null;
+    let hash = 2166136261;
+    for (let i = 0; i < canonical.length; i++) hash = Math.imul(hash ^ canonical.charCodeAt(i), 16777619);
+    const rng = mulberry32(hash >>> 0);
+    const sources = SCENARIOS.filter(sc => sc.winCon && sc.winCon.type === "regicide");
+    if (!sources.length) return null;
+    const source = sources[Math.floor(rng() * sources.length)];
+    const scenario = Object.assign({}, source, {
+      aegis: Object.assign({}, source.aegis),
+      crystals: Object.assign({}, source.crystals),
+      winCon: Object.assign({}, source.winCon),
+      pieces: source.pieces.map(piece => Object.assign({}, piece)),
+    });
+    if (rng() < 0.5) scenario.pieces.forEach(piece => { piece.col = 7 - piece.col; });
+    const mutableRoles = scenario.pieces.filter(piece => piece.type !== "sovereign" && piece.type !== "reaper");
+    const roles = ["juggernaut", "trickster", "wildrider", "skirmisher", "harrower"];
+    const swaps = Math.floor(rng() * 3);
+    for (let i = 0; i < swaps && mutableRoles.length; i++) {
+      const piece = mutableRoles[Math.floor(rng() * mutableRoles.length)];
+      const alternatives = roles.filter(role => role !== piece.type);
+      piece.type = alternatives[Math.floor(rng() * alternatives.length)];
+    }
+    scenario.aegis = { light: Math.floor(rng() * 3), dark: Math.floor(rng() * 3) };
+    scenario.crystals = { light: Math.floor(rng() * 3) * 10, dark: Math.floor(rng() * 3) * 10 };
+    scenario.fateCode = canonical;
+    scenario.furies = false;
+    scenario.hazards = false;
+    scenario.movesPerRound = 3;
+    scenario.harrowerDrag = true;
+    delete scenario.furyEvery;
+
+    const occupied = new Set();
+    for (const piece of scenario.pieces) {
+      const cell = piece.row + "," + piece.col;
+      if (piece.row < 0 || piece.row > 7 || piece.col < 0 || piece.col > 7 || occupied.has(cell)) return null;
+      occupied.add(cell);
+    }
+    if (!scenario.pieces.some(piece => piece.type === "sovereign" && piece.side === "light")
+      || !scenario.pieces.some(piece => piece.type === "sovereign" && piece.side === "dark")) return null;
+    return scenario;
+  }
+  function generateFateCode() {
+    return "SG1-" + Math.random().toString(36).slice(2, 10).padEnd(8, "0").toUpperCase();
+  }
+  SG.FateSeeds = Object.freeze({
+    canonicalizeCode: canonicalizeFateCode,
+    buildFateScenario,
+    generateCode: generateFateCode,
+  });
+  function startTrial(scenario) {
+    const fate = !!scenario.fateCode;
+    startMatch("bot", scenario.humanSide, fate ? false : scenario.furies, {
+      scenario,
+      ...(fate ? { movesPerRound: 3, harrowerDrag: true, hazards: false } : {}),
+    });
+  }
   function dailySeed() { const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
   function dailyKey() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
   function startDaily() {
@@ -2492,7 +2577,7 @@
   ["startScreen","hud","gameOverScreen","planBar","boardActions","planLabel","btnWard","btnUndo","btnClear","btnValidate",
    "btnSummon","btnBid","crystalLight","crystalDark",
    "btnReplay","btnRevert","btnThreat","btnForesight","choiceScreen","choiceTitle","choiceSub","choiceOptions","choiceCancel",
-   "btnHotseat","btnVsBot","btnPlayAgain","btnMainMenu","btnQuit","turnBanner","eventLog","winnerHeadline","furyToggle","hazardToggle","harrowerToggle",
+   "btnHotseat","btnVsBot","btnSpectator","btnFateNew","btnFatePlay","fateCode","fateStatus","btnPlayAgain","btnMainMenu","btnQuit","turnBanner","eventLog","winnerHeadline","furyToggle","hazardToggle","harrowerToggle",
    "aegisLight","aegisDark","royalLight","royalDark","countLight","countDark","panelLight","panelDark","midPanel","titleSideLight","titleSideDark",
    "handoffScreen","handoffTitle","handoffText","btnHandoffReady",
    "auctionScreen","auctionTitle","auctionSub","auctionTimer","auctionControls","auctionOptions","auctionAmount","auctionCustomLabel",
@@ -2533,7 +2618,11 @@
     if (!dom.turnBanner) return;
     let txt = "", note = false;
     const chamber = state.run && state.run.active ? t("banner.chamber", { name: t("chamber." + state.run.chamber), n: state.run.chamber + 1, total: CHAMBERS.length }) : "";
-    if (state.scene === "planning" && state.mode === "online" && state.onlineWaiting) txt = t("banner.waiting");
+    if (state.mode === "spectator" && (state.scene === "planning" || state.scene === "battle")) {
+      txt = t("banner.spectator", { round: state.roundNumber + 1 });
+      if (state.caption) txt += " · " + state.caption;
+    }
+    else if (state.scene === "planning" && state.mode === "online" && state.onlineWaiting) txt = t("banner.waiting");
     else if (state.scene === "planning" && state.planNote && performance.now() < (state.planNoteUntil || 0)) { txt = state.planNote; note = true; }
     else if (state.scene === "planning" && state.summonArmed) { txt = t("banner.placing", { piece: pieceName(state.summonArmed) }); note = true; }
     else if (state.scene === "planning") txt = t("banner.planning", { chamber, side: sideLabel(state.planningSide), round: state.roundNumber + 1, first: sideLabel(resolveInitiative(state.crystalBid).first) });
@@ -2565,7 +2654,7 @@
     const n = parseInt(v, 10);
     return PLAN_SECONDS_OPTIONS.includes(n) ? n : PLAN_SECONDS_DEFAULT;
   }
-  function planTimerEnabled() { return !!state && state.mode !== "online" && state.planSeconds > 0; }
+  function planTimerEnabled() { return !!state && state.mode !== "online" && state.mode !== "spectator" && state.planSeconds > 0; }
   // Same monotonic timebase as rAF timestamps (falls back to Date.now when performance.now is missing).
   function monotonicNow() { return perfNow(); }
   // True once the running clock's deadline has passed, even if no frame has sealed the turn yet
@@ -3270,6 +3359,7 @@
 
   function updatePlanBar() {
     if (state.scene !== "planning") { setPlanControlsVisible(false); return; }
+    if (state.mode === "spectator") { setPlanControlsVisible(false); refreshBanner(); return; }
     if (state.mode === "online" && state.onlineWaiting) { setPlanControlsVisible(false); closeChoice(); refreshBanner(); return; }
     setPlanControlsVisible(true);
     const side = state.planningSide;
@@ -3301,6 +3391,7 @@
   /* ---- Replay the last clash (visual re-run) ---- */
   function replayLastRound() {
     if (!state.lastBattle || state.scene !== "planning") return;
+    if (state.mode === "spectator") return;
     if (state.mode === "bot" && state.planningSide !== state.humanSide) return;
     state.replayReturn = snapshotState();
     state.replayReturnPlan = JSON.parse(JSON.stringify(state.plan));
@@ -3318,6 +3409,7 @@
   /* ---- Redo / Revert the last round (undo the outcome, replan) ---- */
   function revertRound() {
     if (state.scene !== "planning") return;
+    if (state.mode === "spectator") return;
     if (state.mode === "online") return;   // a one-sided rewind would desync the two boards
     if (state.mode === "bot" && state.planningSide !== state.humanSide) return;
     if (state.history.length < 2) { setCaption(t("note.noEarlierRound")); refreshBanner(); return; }
@@ -3369,7 +3461,7 @@
   function onlineSelectable(pc) { return state.mode !== "online" || !onlineRoundIds || onlineRoundIds.has(pc.id); }
 
   canvas.addEventListener("click", (evt) => {
-    if (state.scene !== "planning") return;
+    if (state.scene !== "planning" || state.mode === "spectator") return;
     if (planClockExpired()) return;                 // time's up: the next frame seals the plan as it stands
     if (choiceOpen() || performance.now() - choiceClosedAt < 350) return;   // stray click from the pop-up
     // in bot mode, only the human side plans manually
@@ -3469,8 +3561,8 @@
   });
   if (dom.btnReplay) dom.btnReplay.addEventListener("click", () => replayLastRound());
   if (dom.btnRevert) dom.btnRevert.addEventListener("click", () => revertRound());
-  if (dom.btnThreat) dom.btnThreat.addEventListener("click", () => { if (state.scene !== "planning") return; state.showThreat = !state.showThreat; updatePlanBar(); });
-  if (dom.btnForesight) dom.btnForesight.addEventListener("click", () => { if (state.scene !== "planning") return; state.foresightOn = !state.foresightOn; updatePlanBar(); });
+  if (dom.btnThreat) dom.btnThreat.addEventListener("click", () => { if (planningLocked()) return; state.showThreat = !state.showThreat; updatePlanBar(); });
+  if (dom.btnForesight) dom.btnForesight.addEventListener("click", () => { if (planningLocked()) return; state.foresightOn = !state.foresightOn; updatePlanBar(); });
   // Put each piece's figurine in front of its line in the help's role list, so roles can be told apart.
   // A line is matched by its bold piece name (in the current language), falling back to list order.
   const ROLE_ORDER = ["sovereign", "reaper", "juggernaut", "trickster", "wildrider", "skirmisher", "harrower", "fury"];
@@ -3698,7 +3790,7 @@
   });
   if (dom.btnMirror) dom.btnMirror.addEventListener("click", () => { refreshMirror(); dom.mirrorScreen.classList.remove("hidden"); });
   if (dom.btnMirrorClose) dom.btnMirrorClose.addEventListener("click", () => dom.mirrorScreen.classList.add("hidden"));
-  function planningLocked() { return state.scene !== "planning" || choiceOpen() || planClockExpired() || (state.mode === "online" && state.onlineWaiting); }
+  function planningLocked() { return state.scene !== "planning" || state.mode === "spectator" || choiceOpen() || planClockExpired() || (state.mode === "online" && state.onlineWaiting); }
   dom.btnUndo.addEventListener("click", () => {
     if (planningLocked()) return;
     undoLast(); clearSelection(); syncSidePanels(); updatePlanBar();
@@ -3719,10 +3811,47 @@
   dom.btnPlayAgain.addEventListener("click", () => {
     if (state.runOutcome) startDescent();
     else if (state.scenario && !state.scenario.daily) startTrial(state.scenario);
+    else if (state.mode === "spectator") startMatch("spectator", null, state.furiesEnabled, {
+      movesPerRound: state.movesPerRound, harrowerDrag: state.harrowerDragEnabled, hazards: state.hazardsEnabled,
+      difficulty: state.difficulty, persona: state.botPersona,
+    });
     else startMatch(state.mode, state.humanSide, state.furiesEnabled, { movesPerRound: state.movesPerRound, harrowerDrag: state.harrowerDragEnabled, planSeconds: state.planSeconds });
   });
   dom.btnHotseat.addEventListener("click", () => {  startMatch("hotseat", "light", dom.furyToggle && dom.furyToggle.checked, { harrowerDrag: dom.harrowerToggle && dom.harrowerToggle.checked }); });
   dom.btnVsBot.addEventListener("click", () => {  startMatch("bot", "dark", dom.furyToggle && dom.furyToggle.checked, { harrowerDrag: dom.harrowerToggle && dom.harrowerToggle.checked }); });
+  if (dom.btnSpectator) dom.btnSpectator.addEventListener("click", () => {
+    startMatch("spectator", null, dom.furyToggle && dom.furyToggle.checked, {
+      movesPerRound: dom.movesPerRound ? parseInt(dom.movesPerRound.value, 10) || 3 : 3,
+      difficulty: dom.difficulty ? dom.difficulty.value : "normal",
+      persona: dom.persona ? dom.persona.value : "balanced",
+      harrowerDrag: dom.harrowerToggle && dom.harrowerToggle.checked,
+      hazards: dom.hazardToggle && dom.hazardToggle.checked,
+    });
+  });
+  if (dom.btnFateNew) dom.btnFateNew.addEventListener("click", () => {
+    dom.fateCode.value = generateFateCode();
+    dom.fateStatus.textContent = "";
+    dom.fateCode.removeAttribute("aria-invalid");
+  });
+  function playFate() {
+    const scenario = buildFateScenario(dom.fateCode.value);
+    if (!scenario) {
+      dom.fateStatus.textContent = t("fate.invalid");
+      dom.fateCode.setAttribute("aria-invalid", "true");
+      return;
+    }
+    dom.fateCode.value = scenario.fateCode;
+    dom.fateStatus.textContent = "";
+    dom.fateCode.removeAttribute("aria-invalid");
+    startTrial(scenario);
+  }
+  if (dom.btnFatePlay) dom.btnFatePlay.addEventListener("click", playFate);
+  if (dom.fateCode) {
+    dom.fateCode.value = generateFateCode();
+    dom.fateCode.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); playFate(); }
+    });
+  }
   // Turn-timer choice (20 / 60 / 90 s, default 60) is remembered like the piece theme.
   if (dom.planSeconds) {
     dom.planSeconds.value = String(normalizePlanSeconds(loadStore(PLAN_SECONDS_KEY, PLAN_SECONDS_DEFAULT)));
@@ -3779,6 +3908,9 @@
   function showGameOver() {
     if (state.runOutcome) {
       dom.winnerHeadline.textContent = t(state.runOutcome === "victory" ? "over.descentWon" : "over.descentLost");
+    } else if (state.scenario && state.scenario.fateCode) {
+      const won = state.trialResult && state.trialResult.won;
+      dom.winnerHeadline.textContent = t(won ? "over.fateWon" : "over.fateLost", { code: state.scenario.fateCode });
     } else if (state.scenario) {
       const won = state.trialResult && state.trialResult.won;
       dom.winnerHeadline.textContent = t(won ? "over.trialWon" : "over.trialLost");
@@ -3797,7 +3929,11 @@
       html += `<div class="ledger-row"><span>—</span><span>${t("ledger.rounds", { n: state.roundNumber + 1 })}</span><span>—</span></div>`;
       const rec = state.lastRecord;
       if (rec) html += `<div class="ledger-best">${t("ledger.best", { best: rec.bestScore, wins: rec.wins, plays: rec.plays })}${rec.fastest ? t("ledger.fastest", { n: rec.fastest }) : ""}</div>`;
-      if (state.scenario && state.trialResult) html += `<div class="ledger-best">${t(state.trialResult.won ? "ledger.objDone" : "ledger.objFail")} · ${t("scenario." + state.scenario.id + ".blurb")}</div>`;
+      if (state.scenario && state.trialResult) {
+        const blurb = state.scenario.fateCode ? "" : " · " + t("scenario." + state.scenario.id + ".blurb");
+        html += `<div class="ledger-best">${t(state.trialResult.won ? "ledger.objDone" : "ledger.objFail")}${blurb}</div>`;
+      }
+      if (state.scenario && state.scenario.fateCode) html += `<div class="ledger-best">${t("fate.seedLabel", { code: state.scenario.fateCode })}</div>`;
       if (state.dailyShare) html += `<div class="ledger-best" style="color:var(--gold)">${state.dailyShare}</div>`;
       if (state.runOutcome) { const m = loadStore("sg.mirror", {}); html += `<div class="ledger-best">${t("ledger.descent", { n: state.run ? state.run.chamber : 0, total: CHAMBERS.length, obols: state.obolsEarned || 0, bank: m.obols || 0 })}</div>`; }
       dom.ledger.innerHTML = html;
@@ -3825,7 +3961,7 @@
     state.reduceMotion = o.reduceMotion || false;
     state.battleSpeed = o.battleSpeed || 1;
     state.colorGlyphs = o.colorGlyphs || false;
-    if (mode === "bot") {
+    if (mode === "bot" || mode === "spectator") {
       state.difficulty = opts.difficulty || (dom.difficulty ? dom.difficulty.value : "normal");
       let persona = opts.persona || (dom.persona ? dom.persona.value : "balanced");
       if (persona === "random") { const keys = Object.keys(SG.AI_PERSONA); persona = keys[Math.floor(Math.random() * keys.length)]; }
@@ -3852,7 +3988,7 @@
       if (opts.run.carriedCrystals) state.crystals[state.humanSide] += opts.run.carriedCrystals;
     }
     // Mirror of Night — persistent upgrades apply to the human in bot play.
-    if (mode === "bot") applyMirrorUpgrades(state.humanSide);
+    if (mode === "bot" && !(opts.scenario && opts.scenario.fateCode)) applyMirrorUpgrades(state.humanSide);
     // Hecate's Ward — +1 Aegis for any boon holder.
     for (const s of ["light", "dark"]) if (hasBoon(s, "hecate")) state.aegis[s] += 1;
     state.aegisMax = { light: state.aegis.light, dark: state.aegis.dark };   // this match's real charge count
@@ -3861,6 +3997,7 @@
     dom.eventLog.innerHTML = "";
     logEvent(opts.scenario ? t("log.trial", { name: scenarioName(opts.scenario) }) : t("log.start"));
     if (mode === "bot") logEvent(t("log.foe", { persona: t("persona.name." + state.botPersona), difficulty: t("difficulty." + state.difficulty).toUpperCase() }));
+    if (mode === "spectator") logEvent(t("log.spectator", { persona: t("persona.name." + state.botPersona), difficulty: t("difficulty." + state.difficulty).toUpperCase() }));
     if (state.furiesEnabled) { spawnFury(state.lastTs); logEvent(t("log.furies")); }
     dom.startScreen.classList.add("hidden");
     dom.gameOverScreen.classList.add("hidden");
@@ -3913,6 +4050,7 @@
   function refreshLanguage() {
     refreshRoleNameLabels();
     if (!state) return;
+    if (dom.fateCode && dom.fateCode.getAttribute("aria-invalid") === "true") dom.fateStatus.textContent = t("fate.invalid");
     buildThemeOptions();
     syncSidePanels();
     dom.btnSummon.textContent = t("btn.summon");

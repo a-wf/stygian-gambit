@@ -3,6 +3,20 @@ window.SG.I18N_DICT.fr = {
   "doc.title": "Stygian Gambit",
   "lang.label": "Langue",
 
+  "btn.spectator": "Observer : Bot contre Bot",
+  "banner.spectator": "Spectateur · Manche {round}",
+  "log.spectator": "Bot contre Bot · {persona} · {difficulty} · observation uniquement",
+  "fate.heading": "Graines du destin",
+  "fate.hint": "Partagez un code. Même ouverture, une autre destinée.",
+  "fate.codeLabel": "Code du destin",
+  "fate.new": "Nouveau destin",
+  "fate.play": "Jouer ce destin",
+  "fate.invalid": "Utilisez SG1- suivi de 1 à 12 lettres ou chiffres (A–Z, 0–9).",
+  "fate.trialTitle": "Destin {code}",
+  "fate.seedLabel": "Partagez cette ouverture : {code}",
+  "over.fateWon": "DESTIN VAINCU · {code}",
+  "over.fateLost": "DESTIN INDOMPTÉ · {code}",
+
   /* ---- sides, pieces ---- */
   "side.light": "Umbra",
   "side.dark": "Ember",
