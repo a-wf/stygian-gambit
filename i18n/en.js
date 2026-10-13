@@ -45,7 +45,7 @@ window.SG.I18N_DICT.en = {
   "legend.harrower": "<b>Harrower</b> — teleports beside any ally; if enabled, its kill drags down a foe next to the victim too.",
   "legend.fury": "<b>Fury</b> — optional neutral horror. Prowls the board and slays whoever is nearest, either side.",
   "start.rules1": "<b>Each round has two phases.</b> In <b>Strategy</b>, you secretly command up to <b>3 pieces</b> (Move or Strike), in the order you want them to act, and may spend an <b>Aegis</b> to shield a piece from one lethal blow (limited supply). Validate to lock it in. In <b>Battle</b>, both plans play out interleaved — your 1st move, their 1st, your 2nd, their 2nd… and who resolves first alternates every round. A strike whose target has slipped away hits only shadow.",
-  "start.rules2": "Every kill you land yields <b>10 Crystals</b>. Spend them in the Strategy phase to <b>summon reinforcements</b> onto any empty tile in your half of the board: <b>20</b> for a Skirmisher, <b>30</b> for a Juggernaut, Wildrider, or Trickster, <b>40</b> for a Harrower.",
+  "start.rules2": "Every kill you land yields <b>10 Crystals</b>. Spend them in the Strategy phase to <b>summon reinforcements</b> onto any empty tile in your half of the board: <b>20</b> for a Skirmisher, <b>30</b> for a Juggernaut, Wildrider, or Trickster, <b>40</b> for a Harrower. Every round also opens with a <b>tribute of +10 Crystals</b> for each side.",
   "start.furies": "Unleash <b>Furies</b> — neutral horrors that stalk the board and slay either side",
   "start.harrowerDrag": "<b>Harrower</b> ability — its kill drags down a foe next to the victim too",
   "start.hazards": "Awaken <b>Styx Hazards</b> — lava, chasms &amp; soul-fonts that reshape the board",
@@ -207,14 +207,14 @@ window.SG.I18N_DICT.en = {
   "btn.bidLocked": "Initiative: {n}◆ 🔒",
   "title.bidLocked": "Your initiative bid, sealed in this round's auction before planning (it can't be changed now)",
   "auction.title": "Initiative auction — {side}",
-  "auction.sub": "Bid crystals in multiples of 20◆ to act first this round. The higher bid takes initiative and pays in full; the other bidder pays 70% of their pledge; equal bids keep the usual order and both pay 70%. Bids stay hidden until both are sealed.<br>Available: <b>{have}◆</b> · Max bid: <b>{max}◆</b>",
+  "auction.sub": "Bid any whole number of crystals from {min}◆ up to everything you hold to act first this round. The higher bid takes initiative and pays in full; the other bidder pays 70% of their pledge (rounded); equal bids keep the usual order and both pay 70%. Bids stay hidden until both are sealed.<br>Available: <b>{have}◆</b> · Max bid: <b>{max}◆</b>",
   "auction.quick": "Bid amount",
   "auction.optionAria": "Bid {n} crystals",
   "auction.allIn": "All in · {n}◆",
-  "auction.custom": "Amount (◆, multiple of 20, up to {max})",
+  "auction.custom": "Amount (◆, {min} to {max})",
   "auction.pass": "No bid (pass)",
   "auction.lock": "Seal bid",
-  "auction.errInvalid": "Enter a whole number of crystals that is a multiple of 20, from 0 to {max}◆.",
+  "auction.errInvalid": "Enter 0 (pass) or a whole number of crystals from {min} to {max}◆.",
   "auction.timerStart": "{side}: {n} seconds to seal a bid — no bid in time counts as a pass.",
   "auction.sealed": "{side}'s bid is sealed.",
   "auction.handoffText": "{prev}'s bid is sealed and hidden. Hand over to {side} for their sealed bid.",
@@ -274,14 +274,30 @@ window.SG.I18N_DICT.en = {
   /* ---- online duel ---- */
   "online.title": "ONLINE DUEL",
   "online.subtitle": "Play the same match live across two computers.",
-  "online.furies": "Unleash <b>Furies</b>",
-  "online.harrowerDrag": "<b>Harrower</b> collateral drag",
   "online.create": "Create a room",
-  "online.createNote": "You'll get a code to share. You play <b>Umbra</b> (host).",
+  "online.createNote": "You'll get a code to share. You play <b>Umbra</b> (host); your settings apply to both players.",
   "online.or": "— or —",
   "online.codePlaceholder": "CODE",
   "online.join": "Join a room",
-  "online.joinNote": "Enter a friend's code. You play <b>Ember</b>.",
+  "online.joinNote": "Enter a friend's code to see the host's settings, then join. You play <b>Ember</b>.",
+  "log.tribute": "The Styx pays its tribute — {light} and {dark} each gain +{n}◆.",
+  "log.onlineRules": "Room settings — {rules}",
+  "online.roomSettings": "Room settings",
+  "online.previewTitle": "Room {code} — the host's settings",
+  "online.settingsNote": "Taken from the main menu — go <b>Back</b> to change them. Whoever joins plays with exactly these settings.",
+  "online.hostNote": "Locked for this room. Your opponent sees them before joining.",
+  "online.previewNote": "Chosen by the host and shared by both players — they can't be changed here.",
+  "online.confirmJoin": "Join with these settings",
+  "online.cancelJoin": "Choose another room",
+  "online.on": "On",
+  "online.off": "Off",
+  "online.botOnly": "{value} (bot matches only)",
+  "online.timerUntimed": "{time} chosen — online duels are untimed",
+  "online.themeOwn": "Each player's own",
+  "online.themeLocked": "Set by the online room for this duel.",
+  "online.sumFuries": "Furies",
+  "online.sumHazards": "Styx Hazards",
+  "online.sumHarrower": "Harrower drag",
   "online.creating": "Creating room…",
   "online.joining": "Joining…",
   "online.codeLabel": "Your room code:",
@@ -291,6 +307,7 @@ window.SG.I18N_DICT.en = {
   "net.badCode": "Invalid code.",
   "net.notFound": "Room not found.",
   "net.full": "This room is already full.",
+  "net.startFailed": "The duel could not be started (connection problem). Please create or join a new room.",
 
   /* ---- Boons, chambers, Mirror ---- */
   "boon.titleRun": "CHAMBER CLEARED — CHOOSE A BOON ({n}/{total})",
@@ -436,7 +453,7 @@ window.SG.I18N_DICT.en = {
 <p><b>Doom Sight</b> — shades in red every tile an enemy piece can strike from where it stands now (it never reveals the hidden plan). <b>Foresight</b> — simulates <i>only your plan</i> on a frozen board and shows the result as ghosts (who hits, who dies ✖, who strikes shadow) so you can refine it before validating. The enemy also acts, so treat it as the best case, not a guarantee.</p>
 
 <h2>Crystals: interest &amp; combos</h2>
-<p>At the start of each Strategy phase you earn <b>interest</b>: +1 crystal per 20 banked (at most +5) — save or spend. Chaining kills in one battle triggers <b>SOULS</b> tiers that pay bonus crystals.</p>
+<p>At the start of each Strategy phase you earn <b>interest</b>: +1 crystal per 20 banked (at most +5) — save or spend. Then the Styx pays both sides a <b>tribute of +10 crystals</b>, before the initiative auction. Chaining kills in one battle triggers <b>SOULS</b> tiers that pay bonus crystals.</p>
 
 <h2>Difficulty &amp; Wardens (vs bot)</h2>
 <p>Choose the difficulty (<b>Easy → Unfair</b>) and an opposing <b>Warden</b> with its own temperament: <b>The Butcher</b> (hungry for kills), <b>The Warden</b> (defensive, hoards Aegis), <b>The Swarm</b> (summons nonstop), or random.</p>

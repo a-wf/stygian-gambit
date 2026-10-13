@@ -44,7 +44,7 @@ window.SG.I18N_DICT.zh = {
   "legend.harrower": "<b>掠魂者</b>——瞬移至任意友军身旁；若开启选项，其击杀还会拖垮受害者身旁的一名敌人。",
   "legend.fury": "<b>复仇女神</b>——可选的中立恐怖之物。游荡于棋盘之上，斩杀离它最近者，不分阵营。",
   "start.rules1": "<b>每回合分为两个阶段。</b>在<b>谋略</b>阶段，你秘密指挥至多<b>3枚棋子</b>（移动或攻击），按你希望的顺序行动，并可消耗一面<b>神盾</b>为一枚棋子抵挡一次致命一击（数量有限）。点击确认以锁定计划。在<b>战斗</b>阶段，双方计划交替上演——你的第1步、对方的第1步、你的第2步、对方的第2步……而谁先结算每回合轮换。若攻击目标已经溜走，这一击只会击中虚影。",
-  "start.rules2": "你每完成一次击杀可获得<b>10晶石</b>。在谋略阶段消耗晶石，即可在你半场的任意空格<b>召唤援军</b>：散兵<b>20</b>，巨像、狂骑或诡术师<b>30</b>，掠魂者<b>40</b>。",
+  "start.rules2": "你每完成一次击杀可获得<b>10晶石</b>。在谋略阶段消耗晶石，即可在你半场的任意空格<b>召唤援军</b>：散兵<b>20</b>，巨像、狂骑或诡术师<b>30</b>，掠魂者<b>40</b>。每回合开始时，双方还各获得<b>+10晶石的贡品</b>。",
   "start.furies": "释放<b>复仇女神</b>——游荡棋盘、不分敌我皆会斩杀的中立恐怖之物",
   "start.harrowerDrag": "<b>掠魂者</b>能力——其击杀还会拖垮受害者身旁的一名敌人",
   "start.hazards": "唤醒<b>冥河险境</b>——熔岩、裂谷&amp;魂泉将重塑棋盘",
@@ -206,14 +206,14 @@ window.SG.I18N_DICT.zh = {
   "btn.bidLocked": "先手：{n}◆ 🔒",
   "title.bidLocked": "本回合谋划前在竞价中封存的先手出价（现已无法更改）",
   "auction.title": "先手竞价——{side}",
-  "auction.sub": "以20◆的倍数投入水晶，争取本回合先手。出价高者获得先手并全额支付；另一方支付其出价的70%；出价相同则沿用常规顺序，双方各付70%。双方都封存出价之前，出价保持隐藏。<br>可用：<b>{have}◆</b> · 最高出价：<b>{max}◆</b>",
+  "auction.sub": "投入从{min}◆到你全部持有量之间的任意整数水晶，争取本回合先手。出价高者获得先手并全额支付；另一方支付其出价的70%（四舍五入）；出价相同则沿用常规顺序，双方各付70%。双方都封存出价之前，出价保持隐藏。<br>可用：<b>{have}◆</b> · 最高出价：<b>{max}◆</b>",
   "auction.quick": "出价金额",
   "auction.optionAria": "出价 {n} 水晶",
   "auction.allIn": "全部押上 · {n}◆",
-  "auction.custom": "金额（◆，20的倍数，最高 {max}）",
+  "auction.custom": "金额（◆，{min} 至 {max}）",
   "auction.pass": "不出价（放弃）",
   "auction.lock": "封存出价",
-  "auction.errInvalid": "请输入20的倍数的整数水晶，范围 0 至 {max}◆。",
+  "auction.errInvalid": "请输入0（放弃）或 {min} 至 {max}◆ 之间的整数水晶。",
   "auction.timerStart": "{side}：{n} 秒内封存出价——超时视为放弃。",
   "auction.sealed": "{side}的出价已封存。",
   "auction.handoffText": "{prev}的出价已封存并隐藏。请交给{side}进行暗标出价。",
@@ -273,14 +273,30 @@ window.SG.I18N_DICT.zh = {
   /* ---- online duel ---- */
   "online.title": "联机对决",
   "online.subtitle": "在两台电脑上实时进行同一场对局。",
-  "online.furies": "释放<b>复仇女神</b>",
-  "online.harrowerDrag": "<b>掠魂者</b>连带拖垮",
   "online.create": "创建房间",
-  "online.createNote": "你将获得一个可分享的代码。你执<b>幽影</b>（房主）。",
+  "online.createNote": "你将获得一个可分享的代码。你执<b>幽影</b>（房主）；你的设置对双方生效。",
   "online.or": "——或——",
   "online.codePlaceholder": "代码",
   "online.join": "加入房间",
-  "online.joinNote": "输入好友的代码。你执<b>余烬</b>。",
+  "online.joinNote": "输入好友的代码，先查看房主的设置，再加入。你执<b>余烬</b>。",
+  "log.tribute": "冥河献上贡品——{light}与{dark}各得+{n}◆。",
+  "log.onlineRules": "房间设置——{rules}",
+  "online.roomSettings": "房间设置",
+  "online.previewTitle": "房间 {code} —— 房主的设置",
+  "online.settingsNote": "取自主菜单——点<b>返回</b>即可修改。加入者将完全按这些设置对战。",
+  "online.hostNote": "本房间的设置已锁定。对手在加入前可以看到。",
+  "online.previewNote": "由房主选定、双方共用——此处无法更改。",
+  "online.confirmJoin": "按此设置加入",
+  "online.cancelJoin": "选择其他房间",
+  "online.on": "开",
+  "online.off": "关",
+  "online.botOnly": "{value}（仅限人机对战）",
+  "online.timerUntimed": "已选 {time}——联机对决不计时",
+  "online.themeOwn": "各自的主题",
+  "online.themeLocked": "本场对决由联机房间设定。",
+  "online.sumFuries": "复仇女神",
+  "online.sumHazards": "冥河险境",
+  "online.sumHarrower": "掠魂者拖垮",
   "online.creating": "正在创建房间…",
   "online.joining": "正在加入…",
   "online.codeLabel": "你的房间代码：",
@@ -290,6 +306,7 @@ window.SG.I18N_DICT.zh = {
   "net.badCode": "代码无效。",
   "net.notFound": "未找到房间。",
   "net.full": "该房间已满。",
+  "net.startFailed": "无法开始对决（连接问题）。请创建或加入新的房间。",
 
   /* ---- Boons, chambers, Mirror ---- */
   "boon.titleRun": "厅室已清——选择一项恩赐（{n}/{total}）",
@@ -435,7 +452,7 @@ window.SG.I18N_DICT.zh = {
 <p><b>厄运之眼</b>——以红色标出敌方棋子从当前位置能够攻击的每一格（绝不会泄露隐藏的计划）。<b>预见</b>——在冻结的棋盘上<i>只模拟你的计划</i>，并以幻影显示结果（谁命中、谁阵亡✖、谁击中虚影），让你在确认之前加以完善。敌人同样会行动，所以请把它当作最理想的情况，而非保证。</p>
 
 <h2>晶石：利息&amp;连击</h2>
-<p>每个谋略阶段开始时，你会获得<b>利息</b>：每存20晶石+1（最多+5）——存下还是花掉，由你决定。在一场战斗中连续击杀会触发<b>聚魂</b>档位，奖励额外晶石。</p>
+<p>每个谋略阶段开始时，你会获得<b>利息</b>：每存20晶石+1（最多+5）——存下还是花掉，由你决定。随后冥河向双方各献上<b>+10晶石的贡品</b>，然后才进行先手竞价。在一场战斗中连续击杀会触发<b>聚魂</b>档位，奖励额外晶石。</p>
 
 <h2>难度&amp;守望者（对战机器人）</h2>
 <p>选择难度（<b>简单 → 不公平</b>）以及一位性格各异的对手<b>守望者</b>：<b>屠夫</b>（渴求击杀）、<b>守望者</b>（偏重防守，囤积神盾）、<b>虫群</b>（不停召唤），或随机。</p>

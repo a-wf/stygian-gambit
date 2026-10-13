@@ -13,6 +13,7 @@ function createRealtimeDb() {
   const listeners = new Map();
   const failedSets = new Set();
   const failedGets = new Set();
+  const failedGetCounts = new Map();
   const pendingSets = new Map();
   const pendingGets = new Map();
   const pendingUpdates = new Map();
@@ -38,10 +39,13 @@ function createRealtimeDb() {
     };
   }
   function emit() {
-    for (const [pathname, callbacks] of listeners) {
-      const snap = snapshot(readPath(pathname));
-      for (const callback of [...callbacks]) callback(snap);
-    }
+    for (const pathname of listeners.keys()) emitPath(pathname);
+  }
+  function emitPath(pathname) {
+    const callbacks = listeners.get(pathname);
+    if (!callbacks) return;
+    const snap = snapshot(readPath(pathname));
+    for (const callback of [...callbacks]) callback(snap);
   }
   function ref(pathname) {
     return {
@@ -78,7 +82,11 @@ function createRealtimeDb() {
       },
       get() {
         getCalls.push(pathname);
-        if (failedGets.has(pathname)) return Promise.reject(new Error("database unavailable"));
+        const failuresLeft = failedGetCounts.get(pathname) || 0;
+        if (failedGets.has(pathname) || failuresLeft > 0) {
+          if (failuresLeft > 0) failedGetCounts.set(pathname, failuresLeft - 1);
+          return Promise.reject(new Error("database unavailable"));
+        }
         const pending = pendingGets.get(pathname);
         if (pending && pending.length) return pending.shift().promise;
         return Promise.resolve(snapshot(readPath(pathname)));
@@ -124,6 +132,9 @@ function createRealtimeDb() {
         resolve() { resolve(snapshot(readPath(pathname))); },
         reject,
       };
+    },
+    failNextGet(pathname, count = 1) {
+      failedGetCounts.set(pathname, count);
     },
     holdNextUpdate(pathname) {
       let resolve, reject;
@@ -173,9 +184,275 @@ function createRoom(net, options = {}) {
   return new Promise(resolve => net.createRoom(options, (error, result) => resolve({ error, result })));
 }
 
+function peekRoom(net, code) {
+  return new Promise(resolve => net.peekRoom(code, (error, result) => resolve({ error, result })));
+}
+
 function joinRoom(net, code) {
   return new Promise(resolve => net.joinRoom(code, error => resolve(error)));
 }
+
+function waitFor(predicate, timeoutMs = 5000) {
+  const started = Date.now();
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      if (predicate()) return resolve();
+      if (Date.now() - started >= timeoutMs) return reject(new Error("timed out waiting for async room event"));
+      setTimeout(check, 10);
+    };
+    check();
+  });
+}
+
+test("room settings are normalized into one write and read identically by host and guest", async () => {
+  const db = createRealtimeDb();
+  const host = loadNet(db.firebase).Net;
+  const guest = loadNet(db.firebase).Net;
+  const created = await createRoom(host, {
+    furies: true,
+    hazards: true,
+    harrowerDrag: true,
+    movesPerRound: "5",
+    planSeconds: "90",
+    difficulty: "unfair",
+    persona: "swarm",
+    theme: "<script>",
+    seed: -1,
+    ignored: "not part of the room protocol",
+  });
+
+  assert.equal(created.error, null);
+  const { code, config } = created.result;
+  const roomPath = `rooms/${code}`;
+  const written = db.data.rooms[code].config;
+  assert.equal(db.writes.filter(write => write.pathname === roomPath).length, 1,
+    "the host writes the canonical config once with the room record");
+  assert.deepEqual(JSON.parse(JSON.stringify(written)), {
+    v: 2,
+    furies: true,
+    harrowerDrag: true,
+    hazards: true,
+    movesPerRound: 5,
+    planSeconds: 90,
+    difficulty: "unfair",
+    persona: "swarm",
+    seed: written.seed,
+    firstSide: "light",
+    createdAt: written.createdAt,
+  });
+  assert.ok(Number.isInteger(written.seed) && written.seed >= 0 && written.seed <= 0xFFFFFFFF);
+  assert.ok(Number.isFinite(written.createdAt));
+  assert.equal("theme" in written, false, "invalid theme ids are omitted rather than written as null");
+  assert.equal("ignored" in written, false, "unknown creator properties are not serialized");
+  assert.equal(config.movesPerRound, 5);
+  assert.equal(config.planSeconds, 90);
+  assert.equal(config.seed, written.seed);
+
+  const writesBeforePeek = db.writes.length;
+  const updatesBeforePeek = db.updateCalls.length;
+  const peeked = await peekRoom(guest, ` ${code.toLowerCase()} `);
+  assert.equal(peeked.error, null);
+  assert.equal(peeked.result.code, code);
+  assert.deepEqual(JSON.parse(JSON.stringify(peeked.result.config)), JSON.parse(JSON.stringify(config)));
+  assert.equal(db.writes.length, writesBeforePeek, "preview is read-only");
+  assert.equal(db.updateCalls.length, updatesBeforePeek, "preview does not claim the guest seat");
+  assert.equal(db.listenerCount(`${roomPath}/status`), 1, "only the host's status watcher exists before joining");
+  assert.equal(db.listenerCount(`${roomPath}/rounds`), 1, "preview registers no round listener");
+
+  // Deliberately change the persisted copy after room creation. The join/start protocol must use the live
+  // room record, not the creator's local callback value or an earlier preview snapshot.
+  const liveConfig = Object.assign({}, written, {
+    movesPerRound: 2,
+    planSeconds: 20,
+    difficulty: "hard",
+    persona: "warden",
+    theme: "ash",
+    seed: 87654321,
+  });
+  db.seed(`${roomPath}/config`, liveConfig);
+  const expectedLiveConfig = host.normalizeConfig(liveConfig, code);
+  const hostStarts = [];
+  const guestStarts = [];
+  host.onStart = value => hostStarts.push(value);
+  guest.onStart = value => guestStarts.push(value);
+  assert.equal(await joinRoom(guest, code), null);
+  await waitForAsyncCallbacks();
+  assert.equal(hostStarts.length, 1, "the host starts after the guest changes room status");
+  assert.equal(guestStarts.length, 1, "the guest starts from the config it read before claiming its seat");
+  const hostConfig = { ...hostStarts[0] };
+  const guestConfig = { ...guestStarts[0] };
+  delete hostConfig.mySide;
+  delete guestConfig.mySide;
+  assert.deepEqual(hostConfig, guestConfig, "both peers receive identical normalized room settings");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(hostConfig)),
+    JSON.parse(JSON.stringify(expectedLiveConfig)),
+    "the room record, not a local menu/read-back cache, is authoritative",
+  );
+  assert.equal(hostStarts[0].mySide, "light");
+  assert.equal(guestStarts[0].mySide, "dark");
+  assert.equal(db.writes.filter(write => write.pathname === roomPath).length, 1,
+    "joining changes guest/status paths, never rewrites the canonical config");
+});
+
+test("invalid creator settings fall back to safe room defaults", async () => {
+  const db = createRealtimeDb();
+  const host = loadNet(db.firebase).Net;
+  const created = await createRoom(host, {
+    movesPerRound: 99,
+    planSeconds: 33,
+    difficulty: "nightmare",
+    persona: "unknown",
+    theme: "<svg/onload>",
+    seed: -4,
+    furies: "true",
+    hazards: 0,
+    harrowerDrag: false,
+  });
+  assert.equal(created.error, null);
+  const { code, config } = created.result;
+  assert.equal(config.movesPerRound, 3);
+  assert.equal(config.planSeconds, 60);
+  assert.equal(config.difficulty, "normal");
+  assert.equal(config.persona, "balanced");
+  assert.equal(config.furies, true, "the creator's boolean-like toggle is canonicalized");
+  assert.equal(config.hazards, false);
+  assert.equal(config.harrowerDrag, false);
+  assert.equal("theme" in db.data.rooms[code].config, false);
+  assert.equal(db.writes.filter(write => write.pathname === `rooms/${code}`).length, 1);
+});
+
+test("a transient host config read failure does not desynchronize the two starting peers", async () => {
+  const db = createRealtimeDb();
+  const host = loadNet(db.firebase).Net;
+  const guest = loadNet(db.firebase).Net;
+  const created = await createRoom(host, { movesPerRound: 4, seed: 1234 });
+  const code = created.result.code;
+  const roomPath = `rooms/${code}`;
+  const hostStarts = [];
+  const guestStarts = [];
+  host.onStart = config => hostStarts.push(config);
+  guest.onStart = config => guestStarts.push(config);
+  db.failNextGet(`${roomPath}/config`);
+
+  const joinResults = [];
+  guest.joinRoom(code, error => joinResults.push(error));
+  await waitFor(() => joinResults.length > 0);
+  assert.ok(db.getCalls.includes(`${roomPath}/config`), "the host's config read was the injected transient failure");
+  assert.ok(db.getCalls.filter(path => path === `${roomPath}/config`).length >= 2,
+    "the host retries its transiently failed config read");
+  assert.deepEqual(joinResults, [null], "a recoverable read succeeds rather than failing closed");
+  assert.equal(hostStarts.length, 1);
+  assert.equal(guestStarts.length, 1);
+  const hostConfig = { ...hostStarts[0] };
+  const guestConfig = { ...guestStarts[0] };
+  delete hostConfig.mySide;
+  delete guestConfig.mySide;
+  assert.deepEqual(hostConfig, guestConfig,
+    "both peers start exactly once with the same normalized room config");
+  assert.equal(db.writes.filter(write => write.pathname === `${roomPath}/start`).length, 1,
+    "the host publishes one confirmed start after recovering");
+});
+
+async function assertHandshakeFailsClosed(failure) {
+  const db = createRealtimeDb();
+  const hostErrors = [];
+  const host = loadNet(db.firebase, hostErrors).Net;
+  const guest = loadNet(db.firebase).Net;
+  const created = await createRoom(host, { movesPerRound: 4, seed: 1234 });
+  const { code } = created.result;
+  const roomPath = `rooms/${code}`;
+  if (failure === "config-read") db.failedGets.add(`${roomPath}/config`);
+  else db.failedSets.add(`${roomPath}/start`);
+
+  const hostStarts = [];
+  const guestStarts = [];
+  const startFailures = [];
+  const joinResults = [];
+  host.onStart = config => hostStarts.push(config);
+  host.onStartFailed = error => startFailures.push(error);
+  guest.onStart = config => guestStarts.push(config);
+  guest.joinRoom(code, error => joinResults.push(error));
+
+  await waitFor(() => startFailures.length > 0 && joinResults.length > 0, 7000);
+  assert.deepEqual(hostStarts, [], "the host must not start without a confirmed handshake");
+  assert.deepEqual(guestStarts, [], "the guest must not start without the host confirmation");
+  assert.deepEqual(startFailures, ["net.startFailed"]);
+  assert.deepEqual(joinResults, ["net.startFailed"]);
+  assert.equal(host.getCode(), null, "the host releases its room state after failure");
+  assert.equal(guest.getCode(), null, "the guest releases its room state after failure");
+  assert.equal(db.data.rooms[code].host.present, false, "the host presence is released");
+  assert.equal(db.data.rooms[code].guest.present, false, "the guest seat is released");
+  assert.equal(db.listenerCount(`${roomPath}/status`), 0, "failed peers unsubscribe their room listeners");
+  assert.equal(db.listenerCount(`${roomPath}/start`), 0);
+  if (failure === "config-read") {
+    assert.equal(db.writes.filter(write => write.pathname === `${roomPath}/start`).length, 0,
+      "an unreadable config is never confirmed");
+  } else {
+    assert.equal(db.writes.filter(write => write.pathname === `${roomPath}/start`).length, 4,
+      "start confirmation is retried only for the bounded number of attempts");
+    assert.equal(db.data.rooms[code].start, undefined, "a rejected confirmation is not visible to the guest");
+  }
+}
+
+test("permanent host config read failure fails both peers closed and releases the guest seat", async () => {
+  await assertHandshakeFailsClosed("config-read");
+});
+
+test("permanent start confirmation write failure fails both peers closed and releases the guest seat", async () => {
+  await assertHandshakeFailsClosed("start-write");
+});
+
+test("leaving while the guest awaits start prevents either peer from starting", async () => {
+  const db = createRealtimeDb();
+  const host = loadNet(db.firebase).Net;
+  const guest = loadNet(db.firebase).Net;
+  const created = await createRoom(host, { movesPerRound: 4, seed: 1234 });
+  const { code } = created.result;
+  const roomPath = `rooms/${code}`;
+  const pendingConfigRead = db.holdNextGet(`${roomPath}/config`);
+  const hostStarts = [];
+  const guestStarts = [];
+  const opponentLeft = [];
+  const joinResults = [];
+  host.onStart = config => hostStarts.push(config);
+  host.onOpponentLeft = () => opponentLeft.push(true);
+  guest.onStart = config => guestStarts.push(config);
+
+  guest.joinRoom(code, error => joinResults.push(error));
+  await waitFor(() => db.getCalls.includes(`${roomPath}/config`) && db.data.rooms[code].guest.present === true);
+  guest.leave();
+  assert.equal(db.data.rooms[code].guest.present, false, "cancel releases the claimed guest seat");
+  assert.equal(db.listenerCount(`${roomPath}/start`), 0, "leave unsubscribes the pending start watcher");
+
+  pendingConfigRead.resolve();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  await waitForAsyncCallbacks();
+  assert.deepEqual(hostStarts, [], "the host must abandon its pending handshake after the guest leaves");
+  assert.deepEqual(guestStarts, [], "the late host confirmation cannot start a guest who left");
+  assert.deepEqual(opponentLeft, [], "a cancelled setup must not become a started match followed by opponent-left");
+  assert.deepEqual(joinResults, [], "an explicitly abandoned join does not complete later");
+  assert.equal(guest.getCode(), null);
+  assert.equal(db.data.rooms[code].guest.present, false);
+});
+
+test("room preview reports missing and full rooms without claiming or subscribing", async () => {
+  const db = createRealtimeDb();
+  const net = loadNet(db.firebase).Net;
+  const missing = await peekRoom(net, "MISSING");
+  assert.equal(missing.error, "net.notFound");
+  const malformed = await peekRoom(net, "x");
+  assert.equal(malformed.error, "net.badCode");
+  assert.deepEqual(db.writes, []);
+  assert.deepEqual(db.updateCalls, []);
+
+  db.seed("rooms/FULL", { config: {}, status: "playing", host: { present: true } });
+  const full = await peekRoom(net, "FULL");
+  assert.equal(full.error, "net.full");
+  assert.deepEqual(db.writes, []);
+  assert.deepEqual(db.updateCalls, []);
+  assert.equal(db.listenerCount("rooms/FULL/status"), 0);
+});
 
 test("online bids are written to each side path and reported only when both are ready", async () => {
   const db = createRealtimeDb();

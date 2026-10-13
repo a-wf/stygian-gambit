@@ -43,7 +43,7 @@ window.SG.I18N_DICT.fr = {
   "legend.harrower": "<b>Harrower</b> — se téléporte à côté de n'importe quel allié ; si l'option est activée, son coup mortel entraîne aussi un ennemi voisin de la victime.",
   "legend.fury": "<b>Fury</b> — horreur neutre facultative. Rôde sur le plateau et tue la pièce la plus proche, quel que soit son camp.",
   "start.rules1": "<b>Chaque round compte deux phases.</b> En <b>Stratégie</b>, tu commandes en secret jusqu'à <b>3 pièces</b> (Déplacer ou Frapper), dans l'ordre où tu veux qu'elles agissent, et tu peux dépenser un <b>Aegis</b> pour protéger une pièce d'un coup mortel (réserve limitée). Clique sur Valider pour verrouiller ton plan. En <b>Bataille</b>, les deux plans se jouent en alternance — ton 1er ordre, son 1er, ton 2e, son 2e… et le camp qui agit en premier change à chaque round. Une frappe dont la cible s'est dérobée ne touche que l'ombre.",
-  "start.rules2": "Chaque ennemi que tu abats te rapporte <b>10 cristaux</b>. Dépense-les en phase de Stratégie pour <b>invoquer des renforts</b> sur n'importe quelle case vide de ta moitié du plateau : <b>20</b> pour un Skirmisher, <b>30</b> pour un Juggernaut, un Wildrider ou un Trickster, <b>40</b> pour un Harrower.",
+  "start.rules2": "Chaque ennemi que tu abats te rapporte <b>10 cristaux</b>. Dépense-les en phase de Stratégie pour <b>invoquer des renforts</b> sur n'importe quelle case vide de ta moitié du plateau : <b>20</b> pour un Skirmisher, <b>30</b> pour un Juggernaut, un Wildrider ou un Trickster, <b>40</b> pour un Harrower. Chaque round commence aussi par un <b>tribut de +10 cristaux</b> pour chaque camp.",
   "start.furies": "Libère les <b>Furies</b> — horreurs neutres qui rôdent sur le plateau et tuent dans les deux camps",
   "start.harrowerDrag": "Capacité <b>Harrower</b> — il entraîne aussi un ennemi voisin de la victime",
   "start.hazards": "Réveille les <b>Styx Hazards</b> — lave, gouffres &amp; fontaines d'âmes qui remodèlent le plateau",
@@ -205,14 +205,14 @@ window.SG.I18N_DICT.fr = {
   "btn.bidLocked": "Initiative : {n}◆ 🔒",
   "title.bidLocked": "Ta mise d'initiative, scellée lors des enchères de ce round avant la planification (elle ne peut plus changer)",
   "auction.title": "Enchères d'initiative — {side}",
-  "auction.sub": "Mise des cristaux par multiples de 20◆ pour agir en premier ce round. La plus forte mise prend l'initiative et paie l'intégralité ; l'autre paie 70% de sa mise ; à égalité, l'ordre habituel est conservé et les deux paient 70%. Les mises restent cachées jusqu'à ce que les deux soient scellées.<br>Disponible : <b>{have}◆</b> · Mise max : <b>{max}◆</b>",
+  "auction.sub": "Mise n'importe quel nombre entier de cristaux, de {min}◆ jusqu'à tout ce que tu possèdes, pour agir en premier ce round. La plus forte mise prend l'initiative et paie l'intégralité ; l'autre paie 70% de sa mise (arrondi) ; à égalité, l'ordre habituel est conservé et les deux paient 70%. Les mises restent cachées jusqu'à ce que les deux soient scellées.<br>Disponible : <b>{have}◆</b> · Mise max : <b>{max}◆</b>",
   "auction.quick": "Montant de la mise",
   "auction.optionAria": "Miser {n} cristaux",
   "auction.allIn": "Tout miser · {n}◆",
-  "auction.custom": "Montant (◆, multiple de 20, jusqu'à {max})",
+  "auction.custom": "Montant (◆, de {min} à {max})",
   "auction.pass": "Aucune mise (passer)",
   "auction.lock": "Sceller la mise",
-  "auction.errInvalid": "Entre un nombre entier de cristaux multiple de 20, de 0 à {max}◆.",
+  "auction.errInvalid": "Entre 0 (passer) ou un nombre entier de cristaux de {min} à {max}◆.",
   "auction.timerStart": "{side} : {n} secondes pour sceller une mise — sans mise à temps, c'est un passe.",
   "auction.sealed": "La mise de {side} est scellée.",
   "auction.handoffText": "La mise de {prev} est scellée et cachée. Passe l'appareil à {side} pour sa mise secrète.",
@@ -272,14 +272,30 @@ window.SG.I18N_DICT.fr = {
   /* ---- online duel ---- */
   "online.title": "DUEL EN LIGNE",
   "online.subtitle": "Joue la même partie en direct sur deux ordinateurs.",
-  "online.furies": "Libère les <b>Furies</b>",
-  "online.harrowerDrag": "Entraînement collatéral du <b>Harrower</b>",
   "online.create": "Créer une salle",
-  "online.createNote": "Tu obtiendras un code à partager. Tu joues <b>Umbra</b> (hôte).",
+  "online.createNote": "Tu obtiendras un code à partager. Tu joues <b>Umbra</b> (hôte) ; tes réglages s'appliquent aux deux joueurs.",
   "online.or": "— ou —",
   "online.codePlaceholder": "CODE",
   "online.join": "Rejoindre une salle",
-  "online.joinNote": "Saisis le code d'un ami. Tu joues <b>Ember</b>.",
+  "online.joinNote": "Saisis le code d'un ami pour voir les réglages de l'hôte, puis rejoins. Tu joues <b>Ember</b>.",
+  "log.tribute": "Le Styx verse son tribut — {light} et {dark} gagnent chacun +{n}◆.",
+  "log.onlineRules": "Réglages de la salle — {rules}",
+  "online.roomSettings": "Réglages de la salle",
+  "online.previewTitle": "Salle {code} — réglages de l'hôte",
+  "online.settingsNote": "Repris du menu principal — reviens en <b>Retour</b> pour les modifier. Celui qui rejoint joue avec exactement ces réglages.",
+  "online.hostNote": "Verrouillés pour cette salle. Ton adversaire les voit avant de rejoindre.",
+  "online.previewNote": "Choisis par l'hôte et communs aux deux joueurs — ils ne peuvent pas être modifiés ici.",
+  "online.confirmJoin": "Rejoindre avec ces réglages",
+  "online.cancelJoin": "Choisir une autre salle",
+  "online.on": "Activé",
+  "online.off": "Désactivé",
+  "online.botOnly": "{value} (parties contre le bot uniquement)",
+  "online.timerUntimed": "{time} choisi — les duels en ligne ne sont pas chronométrés",
+  "online.themeOwn": "Celui de chaque joueur",
+  "online.themeLocked": "Défini par la salle en ligne pour ce duel.",
+  "online.sumFuries": "Furies",
+  "online.sumHazards": "Dangers du Styx",
+  "online.sumHarrower": "Entraînement du Harrower",
   "online.creating": "Création de la salle…",
   "online.joining": "Connexion…",
   "online.codeLabel": "Ton code de salle :",
@@ -289,6 +305,7 @@ window.SG.I18N_DICT.fr = {
   "net.badCode": "Code invalide.",
   "net.notFound": "Salle introuvable.",
   "net.full": "Cette salle est déjà pleine.",
+  "net.startFailed": "Le duel n’a pas pu démarrer (problème de connexion). Créez ou rejoignez une nouvelle salle.",
 
   /* ---- Boons, chambers, Mirror ---- */
   "boon.titleRun": "CHAMBRE VAINCUE — CHOISIS UN BIENFAIT ({n}/{total})",
@@ -434,7 +451,7 @@ window.SG.I18N_DICT.fr = {
 <p><b>Vision fatale</b> — ombre en rouge chaque case qu'une pièce ennemie peut frapper depuis sa position actuelle (sans jamais révéler le plan caché). <b>Prémonition</b> — simule <i>uniquement ton plan</i> sur un plateau figé et affiche le résultat en fantômes (qui touche, qui meurt ✖, qui frappe l'ombre) pour que tu puisses l'affiner avant de valider. L'ennemi agit aussi : vois-y le meilleur des cas, pas une garantie.</p>
 
 <h2>Cristaux : intérêts &amp; combos</h2>
-<p>Au début de chaque phase de Stratégie, tu gagnes des <b>intérêts</b> : +1 cristal par tranche de 20 en réserve (+5 au maximum) — épargne ou dépense. Enchaîner les victimes dans une même bataille déclenche des paliers <b>ÂMES</b> qui rapportent des cristaux bonus.</p>
+<p>Au début de chaque phase de Stratégie, tu gagnes des <b>intérêts</b> : +1 cristal par tranche de 20 en réserve (+5 au maximum) — épargne ou dépense. Puis le Styx verse aux deux camps un <b>tribut de +10 cristaux</b>, avant l'enchère d'initiative. Enchaîner les victimes dans une même bataille déclenche des paliers <b>ÂMES</b> qui rapportent des cristaux bonus.</p>
 
 <h2>Difficulté &amp; Gardiens (contre le bot)</h2>
 <p>Choisis la difficulté (<b>Facile → Injuste</b>) et un <b>Gardien</b> adverse au tempérament bien à lui : <b>Le Boucher</b> (avide de victimes), <b>Le Gardien</b> (défensif, thésaurise les Égides), <b>La Nuée</b> (invoque sans relâche), ou aléatoire.</p>

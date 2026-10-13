@@ -238,6 +238,17 @@ html, body {
 .online-block { flex: 1 1 240px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px; border: 1px solid var(--panel-border); border-radius: 8px; background: rgba(20,10,20,0.5); }
 .online-block .rules-note { margin: 0; }
 .online-or { align-self: center; color: #8a7f9a; font-style: italic; }
+.online-block-title { margin: 0; font-size: 1em; color: var(--gold); letter-spacing: 0.06em; }
+/* Read-only room settings: label / value pairs in two columns (logical properties keep RTL right). */
+.online-summary {
+  display: grid; grid-template-columns: auto auto; gap: 3px 12px; margin: 0; width: 100%;
+  font-size: 0.86em; color: #d6cadf; text-align: start;
+}
+.online-summary dt { color: #b9aec2; }
+.online-summary dd { margin: 0; color: #f0e6f5; font-weight: bold; }
+.online-room { max-width: 460px; margin: 0 auto 10px; }
+.online-room .mode-row { margin-top: 4px; }
+#onlineScreen .hidden, #gameOverScreen .hidden { display: none; }
 .online-code-input {
   font-family: inherit; font-size: 1.4em; letter-spacing: 0.2em; text-align: center; text-transform: uppercase;
   width: 160px; padding: 8px; border-radius: 6px; border: 1px solid var(--panel-border);

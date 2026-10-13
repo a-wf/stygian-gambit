@@ -152,7 +152,8 @@ function createHarness({ storedPlanSeconds, omitTimerElements = false, net = nul
     openChoice, startOnlineMatch, planningLocked, beginPlanningPhase, beginAuction,
     lockAuctionBid, onAuctionHandoffReady, onAuctionContinue, tickAuctionClock,
     expireAuctionClock, applyOnlineBids, buildMyPacket, resolveOnlineRound,
-    applyOnlinePacket, beginBattle,
+    applyOnlinePacket, beginBattle, payRoundEconomy, resolveInitiative,
+    normalizeBid, auctionQuickAmounts, isAllInQuickAmount, releaseRoomTheme,
     get validateCalls() { return validateCalls; },
     getElement: id => document.getElementById(id),
   };`;
@@ -175,7 +176,7 @@ function startLocal(h, seconds) {
 
 function startAuctionMatch(h, {
   mode = "hotseat", humanSide = "light", planSeconds = 20,
-  lightCrystals = 39, darkCrystals = 39, difficulty = "normal",
+  lightCrystals = 29, darkCrystals = 29, difficulty = "normal",
 } = {}) {
   h.timer.startMatch(mode, humanSide, false, {
     planSeconds,
@@ -447,26 +448,242 @@ test("bot seals its AI initiative bid before the human bid and planBid cannot re
   h.SG.AI.planTurn = () => ({ commands: [], wards: [], bid: 80 });
   startAuctionMatch(h, { mode: "bot", humanSide: "light", difficulty: "hard" });
 
-  assert.equal(h.SG.state.auction.bids.dark, 20,
-    "the existing hard Warden policy is used for the bot's sealed auction bid");
+  assert.equal(h.SG.state.auction.bids.dark, 25,
+    "the hard Warden bids 25 when it can afford that legal arbitrary amount");
   assert.deepEqual(Array.from(h.SG.state.auction.asked), ["light"], "the human bids only after the bot has sealed");
   assert.equal(h.SG.state.auction.phase, "bid");
   assert.equal(h.timer.getElement("auctionReveal").classList.contains("hidden"), true);
   h.timer.lockAuctionBid("light", "40", "manual");
   assert.equal(h.SG.state.auction.phase, "reveal");
-  assert.deepEqual({ ...h.SG.state.crystalBid }, { light: 40, dark: 20 });
+  assert.deepEqual({ ...h.SG.state.crystalBid }, { light: 40, dark: 25 });
 
   h.timer.onAuctionContinue();
   h.timer.onValidate();
   assert.equal(h.SG.state.scene, "battle");
-  assert.equal(h.SG.state.crystalBid.dark, 20, "legacy planTurn bid data cannot overwrite the auction result");
+  assert.equal(h.SG.state.crystalBid.dark, 25, "legacy planTurn bid data cannot overwrite the auction result");
+});
+
+test("initiative accepts any whole bid from 20 through the purse and rejects invalid custom values", () => {
+  const h = createHarness();
+  startAuctionMatch(h, { lightCrystals: 29, darkCrystals: 29 });
+  const state = h.SG.state;
+  assert.equal(state.crystals.light, 40, "the round's +10 grant is available before the auction");
+  assert.equal(h.timer.normalizeBid("25", 40), 25);
+  assert.equal(h.timer.normalizeBid("37", 40), 37);
+  for (const invalid of ["19", "37.5", "41"]) {
+    assert.equal(h.timer.normalizeBid(invalid, 40), null, `${invalid} is not a legal bid`);
+  }
+
+  for (const invalid of ["19", "37.5", "41"]) {
+    assert.equal(h.timer.lockAuctionBid("light", invalid, "manual"), false);
+    assert.equal(state.auction.phase, "bid", `${invalid} leaves the bid open for correction`);
+  }
+  assert.equal(h.timer.lockAuctionBid("light", "25", "manual"), true);
+  h.timer.onAuctionHandoffReady();
+  assert.equal(h.timer.lockAuctionBid("dark", "37", "manual"), true);
+  assert.deepEqual({ ...state.auction.bids }, { light: 25, dark: 37 });
+  assert.deepEqual({ ...state.auction.result.pay }, { light: 18, dark: 37 },
+    "the losing 25 bid pays exact rounded 70% while the 37 winner pays in full");
+});
+
+test("auction quick picks include arbitrary all-in amounts while retaining 20-crystal steps", () => {
+  const h = createHarness();
+  startAuctionMatch(h, { lightCrystals: 60, darkCrystals: 29 });
+  const state = h.SG.state;
+  assert.equal(state.crystals.light, 73, "interest is added before the +10 round grant");
+  assert.deepEqual(Array.from(h.timer.auctionQuickAmounts(73)), [20, 40, 60, 73]);
+  assert.equal(h.timer.isAllInQuickAmount(73, 73), true);
+  assert.equal(h.timer.isAllInQuickAmount(60, 73), false);
+  assert.deepEqual(Array.from(h.timer.auctionQuickAmounts(40)), [20, 40],
+    "an exact-step purse does not get a duplicate all-in option");
+  assert.equal(h.timer.isAllInQuickAmount(40, 40), false);
+  assert.deepEqual(Array.from(h.timer.auctionQuickAmounts(19)), []);
+  assert.equal(h.timer.getElement("auctionAmount").max, "73");
+  const options = h.timer.getElement("auctionOptions").children;
+  assert.equal(options.length, 4);
+  options[3].dispatch("click");
+  assert.equal(h.timer.getElement("auctionAmount").value, "73",
+    "the UI's final quick-pick is the whole remaining purse when it is off-step");
+  assert.equal(h.timer.lockAuctionBid("light", "73", "manual"), true);
+});
+
+test("AI initiative bids use 25 and 45 when affordable and otherwise respect purse/order", () => {
+  const h = createHarness();
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "ai.js"), "utf8"), h.sandbox, {
+    filename: "ai.js",
+  });
+  const state = h.SG.state;
+  state.firstSide = "light";
+  state.crystals.dark = 100;
+  assert.equal(h.SG.AI.planBid("dark", "hard"), 25);
+  assert.equal(h.SG.AI.planBid("dark", "unfair"), 45);
+  state.crystals.dark = 32;
+  assert.equal(h.SG.AI.planBid("dark", "unfair"), 25, "the unfair bid stays within a smaller legal purse");
+  state.crystals.dark = 19;
+  assert.equal(h.SG.AI.planBid("dark", "hard"), 0, "the AI passes below the minimum");
+  state.crystals.dark = 100;
+  state.firstSide = "dark";
+  assert.equal(h.SG.AI.planBid("dark", "unfair"), 0, "the AI does not bid when it already has initiative");
+});
+
+test("online room move cap and untimed setting apply despite a longer recorded timer choice", () => {
+  const net = {
+    normalizeConfig(config) {
+      return Object.assign({
+        v: 2, furies: false, harrowerDrag: false, hazards: false,
+        movesPerRound: 3, planSeconds: 60, difficulty: "normal", persona: "balanced",
+        theme: null, seed: 17, firstSide: "light",
+      }, config);
+    },
+    submitBid() {},
+    submitPlan() {},
+  };
+  const h = createHarness({ net });
+  h.timer.startOnlineMatch({
+    movesPerRound: 2, planSeconds: 90, difficulty: "hard", persona: "warden",
+    furies: true, hazards: true, harrowerDrag: true, seed: 17,
+  }, "light");
+  const state = h.SG.state;
+  assert.equal(state.movesPerRound, 2);
+  assert.equal(state.planSeconds, 0, "the recorded host timer does not start a local online clock");
+  assert.equal(state.planClock, null);
+  assert.equal(state.auctionClock, null);
+
+  const commands = n => Array.from({ length: n }, (_, i) => ({
+    pieceId: i + 1, kind: "move", row: 2, col: i,
+  }));
+  h.timer.resolveOnlineRound({
+    light: { commands: commands(5), wards: [], summons: [], aegis: 2 },
+    dark: { commands: commands(5), wards: [], summons: [], aegis: 2 },
+  });
+  assert.equal(state.plan.light.length, 2, "the room's move cap clips received light orders");
+  assert.equal(state.plan.dark.length, 2, "the room's move cap clips received dark orders");
+  assert.equal(state.planClock, null, "the remote plans do not start a local timer");
+});
+
+test("online auction accepts custom integer bids and rejects malformed or over-purse peer bids", () => {
+  const net = { submitBid() {}, submitPlan() {} };
+  const h = createHarness({ net });
+  h.timer.startOnlineMatch({ planSeconds: 90 }, "light");
+  const state = h.SG.state;
+  state.crystals = { light: 40, dark: 50 };
+  h.timer.beginPlanningPhase();
+  const round = state.roundNumber;
+
+  assert.equal(h.timer.lockAuctionBid("light", "25", "manual"), true);
+  h.SG.Net.onBothBids(round, { light: 25, dark: 37 });
+  assert.deepEqual({ ...state.crystalBid }, { light: 25, dark: 37 },
+    "both arbitrary legal integers survive the online reveal");
+
+  state.crystals = { light: 40, dark: 40 };
+  h.timer.beginPlanningPhase();
+  assert.equal(h.timer.lockAuctionBid("light", "20", "manual"), true);
+  h.SG.Net.onBothBids(round, { light: 19, dark: 41 });
+  assert.deepEqual({ ...state.crystalBid }, { light: 0, dark: 0 },
+    "below-minimum and over-purse room packets are treated as passes on both clients");
+
+  state.crystals = { light: 40, dark: 40 };
+  h.timer.beginPlanningPhase();
+  assert.equal(h.timer.lockAuctionBid("light", "20", "manual"), true);
+  h.SG.Net.onBothBids(round, { light: 37.5, dark: 25 });
+  assert.deepEqual({ ...state.crystalBid }, { light: 0, dark: 25 },
+    "the game-side online validator rejects a fractional bid even if a malformed packet bypasses the input");
+});
+
+test("round tribute is credited to both sides before auction and is idempotent across online replays", () => {
+  const net = {
+    bids: [],
+    normalizeConfig(config) {
+      return Object.assign({
+        v: 2, furies: false, harrowerDrag: false, hazards: false,
+        movesPerRound: 3, planSeconds: 90, difficulty: "normal", persona: "balanced",
+        theme: null, seed: 23, firstSide: "light",
+      }, config);
+    },
+    submitBid(round, bid) { this.bids.push({ round, bid }); },
+    submitPlan() {},
+  };
+  const h = createHarness({ net });
+  h.timer.startOnlineMatch({ planSeconds: 90, seed: 23 }, "light");
+  const state = h.SG.state;
+  assert.deepEqual({ ...state.crystals }, { light: 10, dark: 10 });
+  assert.equal(state.auctionDone, true, "the no-bid round is settled after the tribute");
+
+  state.roundNumber = 1;
+  state.crystals = { light: 9, dark: 19 };
+  h.timer.beginPlanningPhase();
+  assert.deepEqual({ ...state.crystals }, { light: 19, dark: 29 },
+    "the next round adds exactly 10 to each side before the bid exchange (no interest at these purses)");
+  assert.deepEqual(net.bids.at(-1), { round: 1, bid: 0 },
+    "the online bid submission happens after that round's grant");
+  h.timer.applyOnlineBids(1, { light: 0, dark: 20 });
+  h.timer.onAuctionContinue();
+  const bothPassPlans = {
+    light: { commands: [], wards: [], summons: [], aegis: 2 },
+    dark: { commands: [], wards: [], summons: [], aegis: 2 },
+  };
+  h.timer.resolveOnlineRound(bothPassPlans);
+  const resolvedCrystals = { ...state.crystals };
+  assert.deepEqual(resolvedCrystals, { light: 19, dark: 9 },
+    "the dark side pays its 20-crystal winning bid after receiving the round grant");
+  h.timer.resolveOnlineRound(bothPassPlans);
+  assert.deepEqual({ ...state.crystals }, resolvedCrystals,
+    "a repeated online plan packet rewinds to the paid round snapshot instead of granting or charging twice");
+  h.SG.Net.onBothPlans(1, bothPassPlans);
+  assert.equal(state.scene, "battle", "a duplicate callback during battle is queued rather than started again");
+  assert.deepEqual({ ...state.crystals }, resolvedCrystals,
+    "the network callback path does not charge the same sealed bid a second time");
+  h.timer.finishBattle(state.lastTs + 500);
+  assert.equal(state.roundNumber, 2);
+  assert.deepEqual({ ...state.crystals }, { light: 29, dark: 19 },
+    "the next round receives one fresh +10 grant after the prior packet was repeated");
+
+  // Replay restores the post-grant round snapshot, and completing it must not call the economy again.
+  h.timer.startOnlineMatch({ seed: 23 }, "light");
+  const replayState = h.SG.state;
+  replayState.lastBattle = {
+    fromSnapshot: h.timer.snapshotState(),
+    plans: { light: [], dark: [] },
+    firstSide: replayState.firstSide,
+  };
+  h.timer.replayLastRound();
+  assert.deepEqual({ ...replayState.crystals }, { light: 10, dark: 10 },
+    "replaying the already-paid round does not credit another tribute");
+  h.timer.finishBattle(replayState.lastTs);
+  assert.deepEqual({ ...replayState.crystals }, { light: 10, dark: 10 },
+    "visual Replay keeps the round's +10 grant exactly once");
+});
+
+test("Undo Round restores the earlier economy snapshot without regranting crystals", () => {
+  const h = createHarness();
+  startLocal(h);
+  const state = h.SG.state;
+  assert.deepEqual({ ...state.crystals }, { light: 10, dark: 10 });
+
+  state.roundNumber = 1;
+  h.timer.beginPlanningPhase();
+  assert.deepEqual({ ...state.crystals }, { light: 20, dark: 20 });
+  h.timer.lockAuctionBid("light", "0", "manual");
+  h.timer.onAuctionHandoffReady();
+  h.timer.lockAuctionBid("dark", "0", "manual");
+  h.timer.onAuctionContinue();
+  h.timer.revertRound();
+  assert.equal(state.roundNumber, 0);
+  assert.deepEqual({ ...state.crystals }, { light: 10, dark: 10 });
+  h.timer.beginPlanningPhase();
+  assert.deepEqual({ ...state.crystals }, { light: 10, dark: 10 },
+    "re-entering the restored round does not grant its tribute again");
+  state.roundNumber = 1;
+  h.timer.beginPlanningPhase();
+  assert.deepEqual({ ...state.crystals }, { light: 20, dark: 20 },
+    "the restored economyRound allows the next real round to receive its one +10 grant");
 });
 
 test("online auction waits for both sealed bids, then reveals without starting a local clock", () => {
   const net = { calls: [], submitBid(round, bid) { this.calls.push({ round, bid }); } };
   const h = createHarness({ net });
   h.timer.startOnlineMatch({ furies: false }, "light");
-  h.SG.state.crystals = { light: 39, dark: 39 };
+  h.SG.state.crystals = { light: 40, dark: 40 };
   h.timer.beginPlanningPhase();
   const state = h.SG.state;
 
@@ -496,7 +713,7 @@ test("online bid failures remain recoverable and retry the same sealed amount on
   };
   const h = createHarness({ net });
   h.timer.startOnlineMatch({ furies: false }, "light");
-  h.SG.state.crystals = { light: 39, dark: 39 };
+  h.SG.state.crystals = { light: 40, dark: 40 };
   h.timer.beginPlanningPhase();
 
   const state = h.SG.state;

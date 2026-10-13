@@ -27,11 +27,13 @@
     planBid(side, requestedDiff) {
       const S = SG.state;
       const diff = requestedDiff || S.difficulty || "normal";
-      const maxBotX = Math.floor((S.crystals[side] || 0) / 20);
+      // Any whole amount from 20◆ up to its purse is a legal bid; the Warden likes to top a round
+      // number by 5 (25 beats a plain 20, 45 beats a 40) whenever it can afford to.
+      const have = Math.max(0, Math.floor(S.crystals[side] || 0));
       let bid = 0;
-      if (maxBotX >= 1 && S.firstSide !== side) {
-        if (diff === "hard") bid = 20;
-        else if (diff === "unfair") bid = maxBotX >= 2 ? 40 : 20;
+      if (have >= 20 && S.firstSide !== side) {
+        if (diff === "hard") bid = Math.min(have, 25);
+        else if (diff === "unfair") bid = have >= 45 ? 45 : Math.min(have, 25);
       }
       return bid;
     },

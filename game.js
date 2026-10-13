@@ -22,7 +22,9 @@
   // Initiative auction: one sealed bid per side at the start of every round, before planning.
   const AUCTION_SECONDS = 10;    // each local human bidder's own short clock (never taken from the planning clock)
   const AUCTION_WARN_SECONDS = 3;
-  const BID_STEP = 20;           // bids are multiples of 20◆ (the existing initiative rule)
+  const MIN_BID = 20;            // smallest initiative bid; any whole amount from 20◆ up to what the side holds
+  const QUICK_BID_STEP = 20;     // spacing of the auction's quick-pick buttons only (not a bid rule)
+  const ROUND_TRIBUTE = 10;      // crystals each side receives at the start of every round (before the auction)
   const SUMMON_OPTIONS = [
     { type: "skirmisher", cost: 20, label: "Skirmisher" },
     { type: "juggernaut", cost: 30, label: "Juggernaut" },
@@ -114,8 +116,13 @@
     return id && SG.THEMES && Object.prototype.hasOwnProperty.call(SG.THEMES, id) ? id : "classic";
   }
   let activeThemeId = normalizeThemeId(readThemePreference());
+  let roomThemeLocked = false;  // online duel: the room's theme is applied and the pickers are locked
   let onlineRoundSnap = null;   // identical round-start board both clients rewind to
   let onlineRoundIds = null;    // ids present at round start (summons this round can't be commanded)
+  // Online lobby (overlay before a duel starts): phase = setup | creating | hosting | peeking | preview | joining.
+  // Every async Net reply carries the token of the step that asked; a newer step (or Back) makes it stale.
+  let onlineLobby = { phase: "setup", token: 0 };
+  let onlineLobbyToken = 0;
 
   function newStats() { return { kills: 0, losses: 0, spirals: 0, aegisUsed: 0, aegisBroken: 0, summons: 0, bestCombo: 0 }; }
   function bumpStat(side, key, n) {
@@ -146,6 +153,7 @@
       aegis: { light: AEGIS_START, dark: AEGIS_START },
       crystals: { light: 0, dark: 0 },
       crystalBid: { light: 0, dark: 0 },
+      economyRound: -1,         // last round whose start-of-round tribute + interest were paid (never twice)
       wardMode: false,
       summonArmed: null,
       furiesEnabled: false,
@@ -171,6 +179,8 @@
       difficulty: "normal", botPersona: "balanced",
       scenario: null,
       hazardsEnabled: false, terrain: null,
+      terrainSeed: null,        // online: shared room seed → identical hazard layouts on both clients
+      onlineConfig: null,       // online: the room's canonical (host-chosen) settings, as applied
       boons: { light: {}, dark: {} },
       run: null,
       onlineWaiting: false, onlinePending: null,
@@ -241,6 +251,7 @@
       crystals: { light: state.crystals.light, dark: state.crystals.dark },
       crystalBid: { light: state.crystalBid.light, dark: state.crystalBid.dark },
       auctionDone: !!state.auctionDone,
+      economyRound: state.economyRound,
       aegis: { light: state.aegis.light, dark: state.aegis.dark },
       furiesEnabled: state.furiesEnabled, furyCount: state.furyCount,
       roundNumber: state.roundNumber, firstSide: state.firstSide, planningSide: state.planningSide,
@@ -263,6 +274,8 @@
     state.crystals = { light: snap.crystals.light, dark: snap.crystals.dark };
     state.crystalBid = snap.crystalBid ? { light: snap.crystalBid.light, dark: snap.crystalBid.dark } : { light: 0, dark: 0 };
     state.auctionDone = snap.auctionDone !== false;   // a restored round keeps its revealed bids (no re-auction)
+    // Round-start snapshots are taken after that round's tribute was paid: a restored round never pays again.
+    state.economyRound = snap.economyRound != null ? snap.economyRound : snap.roundNumber;
     state.aegis = { light: snap.aegis.light, dark: snap.aegis.dark };
     state.furiesEnabled = snap.furiesEnabled; state.furyCount = snap.furyCount;
     state.roundNumber = snap.roundNumber; state.firstSide = snap.firstSide; state.planningSide = snap.planningSide;
@@ -460,7 +473,12 @@
     const grid = buildOccupancyGrid(state.pieces);
     const cells = [];
     for (let r = 2; r <= 5; r++) for (let c = 0; c < 8; c++) if (!grid[r][c]) cells.push([r, c]);
-    for (let i = cells.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const tmp = cells[i]; cells[i] = cells[j]; cells[j] = tmp; }
+    // Online: a pure function of the room seed, the round and the (identical) board, so both clients draw
+    // the same layout however often it is (re)generated. Elsewhere: ordinary randomness.
+    const rand = state.terrainSeed != null
+      ? mulberry32((state.terrainSeed ^ Math.imul(state.roundNumber + 1, 0x9E3779B1)) >>> 0)
+      : Math.random;
+    for (let i = cells.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); const tmp = cells[i]; cells[i] = cells[j]; cells[j] = tmp; }
     for (const kind of ["lava", "lava", "chasm", "font"]) { const cell = cells.pop(); if (!cell) break; t[cell[0]][cell[1]] = kind; }
     state.terrain = t;
   }
@@ -810,11 +828,7 @@
     state.summonArmed = null;
     state.pendingReaperStrike = null;
     state.battle = null;
-    // Hoarded Souls — interest on banked crystals (capped), a live save-vs-spend choice each round.
-    for (const s of ["light", "dark"]) {
-      const gain = Math.min(5, Math.floor(state.crystals[s] / 20));
-      if (gain > 0) { state.crystals[s] += gain; logEvent(t("log.interest", { side: sideLabel(s), gain })); }
-    }
+    payRoundEconomy();
     clearSelection();
     if (!state.isReplay) { state.history.push(snapshotState()); if (state.history.length > 14) state.history.shift(); }
     if (state.mode === "online") { onlineRoundSnap = snapshotState(); onlineRoundIds = new Set(state.pieces.filter(p => p.alive).map(p => p.id)); }
@@ -824,6 +838,24 @@
     // (straight away when nobody can afford a bid). The planning clock starts only then, in full.
     beginAuction();
   }
+
+  // Start-of-round economy, paid once per round number and before the auction (so it can fund a bid):
+  //  1. Hoarded Souls — interest on banked crystals (+1 per 20, at most +5), a save-vs-spend choice;
+  //  2. the Styx tribute — +ROUND_TRIBUTE crystals to each side.
+  // Idempotent: state.economyRound remembers the last paid round and travels in every snapshot (history,
+  // Replay, the online round-start rewind), so Replay / Undo Round / a repeated online callback never pay
+  // twice. Online, both clients run this identical, deterministic step on the identical board.
+  function payRoundEconomy() {
+    if (state.economyRound >= state.roundNumber) return;
+    state.economyRound = state.roundNumber;
+    for (const s of ["light", "dark"]) {
+      const gain = Math.min(5, Math.floor(state.crystals[s] / 20));
+      if (gain > 0) { state.crystals[s] += gain; logEvent(t("log.interest", { side: sideLabel(s), gain })); }
+    }
+    for (const s of ["light", "dark"]) state.crystals[s] += ROUND_TRIBUTE;
+    logEvent(t("log.tribute", { light: sideLabel("light"), dark: sideLabel("dark"), n: ROUND_TRIBUTE }));
+  }
+  SG.ROUND_TRIBUTE = ROUND_TRIBUTE;
 
   // Enters (or re-enters) the planning turn of the side in state.planningSide, with a fresh full clock.
   function enterPlanningTurn() {
@@ -867,10 +899,10 @@
       fs = outcome;
       const loser = otherSide(outcome);
       pay[outcome] = b[outcome];
-      if (b[loser] > 0) pay[loser] = Math.round(b[loser] * 0.7);
+      if (b[loser] > 0) pay[loser] = Math.round(b[loser] * 7 / 10);   // exact integer math: same on every client
     } else if (b.light > 0) {
       outcome = "tie";
-      pay.light = pay.dark = Math.round(b.light * 0.7);
+      pay.light = pay.dark = Math.round(b.light * 7 / 10);
     }
     return { first: fs, outcome, bids: b, pay };
   }
@@ -1350,29 +1382,60 @@
   }
 
   /* ---- Online Duel (Firebase-synced, deterministic peer resolution) ---- */
+  // The room's settings as both clients must apply them. net.js already normalizes what it reads from the
+  // room; this re-validates defensively (e.g. a config handed in by something other than net.js).
+  function normalizeOnlineConfig(config) {
+    if (SG.Net && typeof SG.Net.normalizeConfig === "function") return SG.Net.normalizeConfig(config, SG.Net.getCode && SG.Net.getCode());
+    const c = config || {};
+    return {
+      v: 1, furies: c.furies === true, harrowerDrag: c.harrowerDrag === true, hazards: false,
+      movesPerRound: 3, planSeconds: PLAN_SECONDS_DEFAULT, difficulty: "normal", persona: "balanced",
+      theme: null, seed: 0, firstSide: c.firstSide === "dark" ? "dark" : "light",
+    };
+  }
+  // "Random" Warden is resolved from the shared seed, so both clients name the same one. (No bot plays in
+  // an online duel; the host's Difficulty / Warden choices are carried and shown with the room settings.)
+  function resolveRoomPersona(cfg) {
+    const keys = Object.keys(SG.AI_PERSONA || { balanced: 1 });
+    if (cfg.persona !== "random") return keys.indexOf(cfg.persona) !== -1 ? cfg.persona : "balanced";
+    return keys[(cfg.seed >>> 0) % keys.length] || "balanced";
+  }
   function startOnlineMatch(config, mySide) {
+    const cfg = normalizeOnlineConfig(config);
+    releaseRoomTheme();
     state = freshState();
     nextPieceId = 1;
     state.mode = "online";
     state.humanSide = mySide;
+    // Everything below comes from the room (the host's choices), never from this client's menu, so a
+    // guest's own selectors can't override them — not even by changing them while the room is open.
+    state.onlineConfig = cfg;
+    state.movesPerRound = cfg.movesPerRound;
     // Online duels stay untimed: the room only relays plans (no server clock), so a per-client
-    // countdown could neither be enforced nor agreed on. The start screen says so.
+    // countdown could neither be enforced nor agreed on. The host's timer choice is only recorded
+    // in the room settings (cfg.planSeconds) and shown in the lobby.
     state.planSeconds = 0;
-    state.furiesEnabled = !!config.furies;
-    state.harrowerDragEnabled = !!config.harrowerDrag;
-    state.hazardsEnabled = false;                 // terrain RNG would desync clients
+    state.difficulty = cfg.difficulty;
+    state.botPersona = resolveRoomPersona(cfg);
+    state.furiesEnabled = cfg.furies;
+    state.harrowerDragEnabled = cfg.harrowerDrag;
+    state.hazardsEnabled = cfg.hazards;
+    state.terrainSeed = cfg.seed;                 // hazard layouts come from the shared seed (see genTerrain)
     state.terrain = null;
+    applyRoomTheme(cfg.theme);                    // both peers render the host's piece theme
     const o = loadStore("sg.options", {});
     state.reduceMotion = o.reduceMotion || false;
     state.battleSpeed = o.battleSpeed || 1;
     state.colorGlyphs = o.colorGlyphs || false;
-    state.firstSide = config.firstSide || "light";
+    state.firstSide = cfg.firstSide;
     state.viewFlip = mySide === "light";           // each player sees their own army at the bottom
     state.aegisMax = { light: state.aegis.light, dark: state.aegis.dark };
     state.pieces = buildStartingPieces();
+    genTerrain();
     state.lastTs = performance.now();
     dom.eventLog.innerHTML = "";
     logEvent(t("log.online", { side: sideLabel(mySide) }));
+    logEvent(t("log.onlineRules", { rules: roomSettingsRows(cfg).map(r => r.label + ": " + r.value).join(" · ") }));
     if (state.furiesEnabled) { spawnFury(state.lastTs); logEvent(t("log.furiesOnline")); }
     if (dom.onlineScreen) dom.onlineScreen.classList.add("hidden");
     dom.startScreen.classList.add("hidden");
@@ -1416,8 +1479,9 @@
     loadSnapshotPieces(onlineRoundSnap);                 // rewind both clients to the identical board
     applyOnlinePacket("light", plans.light);             // deterministic order: light then dark
     applyOnlinePacket("dark", plans.dark);
-    state.plan.light = (plans.light && plans.light.commands) || [];
-    state.plan.dark = (plans.dark && plans.dark.commands) || [];
+    // Each side gets at most the room's agreed moves per round — enforced identically on both clients.
+    state.plan.light = ((plans.light && plans.light.commands) || []).slice(0, maxCmdFor("light"));
+    state.plan.dark = ((plans.dark && plans.dark.commands) || []).slice(0, maxCmdFor("dark"));
     state.onlineWaiting = false;
     beginBattle(state.lastTs);
   }
@@ -1427,9 +1491,10 @@
     hideAuctionUI();
     state.auction = null;
     state.onlineWaiting = false;
-    if (dom.onlineStatus) dom.onlineStatus.innerHTML = t("online.left");
-    if (dom.onlineSetup) dom.onlineSetup.classList.remove("hidden");
+    releaseRoomTheme();
+    onlineLobby = { phase: "setup", token: ++onlineLobbyToken, notice: "online.left" };
     dom.hud.classList.add("hidden");
+    renderOnlineLobby();
     if (dom.onlineScreen) dom.onlineScreen.classList.remove("hidden");
   }
 
@@ -2587,7 +2652,8 @@
    "btnOptions","btnOptionsGame","optionsScreen","btnOptionsClose","optReduceMotion","optColorGlyphs","optSpeed","optSpeedVal",
    "themeSelect","optThemeSelect",
    "btnDescend","btnMirror","boonScreen","boonList","boonTitle","mirrorScreen","btnMirrorClose","mirrorObols","mirrorUpgrades",
-   "btnOnline","onlineScreen","onlineStatus","onlineSetup","onlineFury","onlineHarrower","btnCreateRoom","joinCode","btnJoinRoom","btnOnlineClose"].forEach(id => { dom[id] = document.getElementById(id); });
+   "btnOnline","onlineScreen","onlineStatus","onlineSetup","onlineCreateSummary","btnCreateRoom","joinCode","btnJoinRoom","btnOnlineClose",
+   "onlineRoomInfo","onlineRoomTitle","onlineRoomNote","onlineRoomSummary","onlineJoinConfirm","btnConfirmJoin","btnCancelJoin"].forEach(id => { dom[id] = document.getElementById(id); });
 
   function setPlanControlsVisible(visible) {
     dom.planBar.classList.toggle("hidden", !visible);
@@ -2746,7 +2812,8 @@
 
   /* ---- Initiative auction (one sealed bid per side, before anyone plans) ----
    * Flow per round: beginPlanningPhase → beginAuction → bid dialog(s) → reveal → enterPlanningTurn.
-   *  - Same currency and rules as before (multiples of 20◆ up to what the side holds; see resolveInitiative).
+   *  - Same currency as before: any whole number of crystals from MIN_BID (20◆) up to what the side holds
+   *    (0 = pass); see resolveInitiative for who acts first and who pays what.
    *    The revealed bids land in state.crystalBid exactly where the old in-plan "Initiative" button put
    *    them, so the summon reserve, the payment when the clash begins and its log lines are unchanged.
    *    The planning-stage bid button is now a read-only display: there is no second bid.
@@ -2766,27 +2833,32 @@
   let auctionGen = 0;         // a stale auction object can never act on a later one
   let auctionClockGen = 0;    // a stale bid clock can never seal a later bidder
   let auctionOptionButtons = [];
+  // Everything the side holds (whole crystals) may be bid; a side under MIN_BID can only pass.
   function maxBidFor(side) {
     const have = (state.crystals && state.crystals[side]) || 0;
-    return Math.floor(Math.max(0, have) / BID_STEP) * BID_STEP;
+    return Math.floor(Math.max(0, have));
   }
-  // Strict bid format: a whole number of crystals, a multiple of 20, from 0 up to maxBid. Anything else → null.
+  // Strict bid format: 0 (a pass) or a whole number of crystals from MIN_BID up to maxBid. Anything else
+  // → null. Used for local input, the Warden's bid and both online bids alike (so both peers agree).
   function normalizeBid(raw, maxBid) {
     if (typeof raw === "number") { if (!Number.isFinite(raw)) return null; raw = String(raw); }
     if (typeof raw !== "string") return null;
     const s = raw.trim();
     if (!/^\d{1,6}$/.test(s)) return null;
     const n = parseInt(s, 10);
-    if (n % BID_STEP !== 0 || n > maxBid) return null;
+    if (n === 0) return 0;
+    if (n < MIN_BID || n > maxBid) return null;
     return n;
   }
-  // Quick amounts mirror the old bid pop-up: 20…100◆, plus "all in" when more is affordable.
+  // Quick amounts: 20…100◆ in steps of 20, plus "all in" (the whole purse) when it isn't one of them.
+  // Any other whole amount ≥ 20 can be typed in the amount field.
   function auctionQuickAmounts(max) {
     const out = [];
-    for (let n = BID_STEP; n <= Math.min(5 * BID_STEP, max); n += BID_STEP) out.push(n);
-    if (max > 5 * BID_STEP) out.push(max);
+    for (let n = QUICK_BID_STEP; n <= Math.min(5 * QUICK_BID_STEP, max); n += QUICK_BID_STEP) out.push(n);
+    if (max >= MIN_BID && out[out.length - 1] !== max) out.push(max);
     return out;
   }
+  function isAllInQuickAmount(n, max) { return n === max && (n % QUICK_BID_STEP !== 0 || n > 5 * QUICK_BID_STEP); }
   function setAttr(el, name, value) { if (el && typeof el.setAttribute === "function") el.setAttribute(name, value); }
   function auctionActive() { return !!state && state.scene === "auction" && !!state.auction; }
   // The Warden's sealed bid: only public information, never the human's bid (which doesn't exist yet).
@@ -2811,7 +2883,7 @@
       queue: [], cur: null, asked: [], holder: "light",
       online: state.mode === "online", submitted: false, autoPass: false, result: null,
     };
-    const canBid = s => maxBidFor(s) >= BID_STEP;
+    const canBid = s => maxBidFor(s) >= MIN_BID;
     if (a.online) {
       // Affordability is identical on both clients, so a round where nobody can bid needs no exchange.
       if (!canBid("light") && !canBid("dark")) { a.bids.light = a.bids.dark = 0; revealAuction(); return; }
@@ -2886,7 +2958,7 @@
     if (reason !== "timeout" && auctionClockExpired()) return false;   // too late: the next frame passes for them
     const max = maxBidFor(side);
     const amount = normalizeBid(raw, max);
-    if (amount == null) { showAuctionError(t("auction.errInvalid", { max })); return false; }
+    if (amount == null) { showAuctionError(t("auction.errInvalid", { min: MIN_BID, max })); return false; }
     sealAuctionBid(side, amount, reason === "timeout");
     return true;
   }
@@ -3062,7 +3134,7 @@
       const max = maxBidFor(side);
       const keep = fresh ? "0" : (dom.auctionAmount ? dom.auctionAmount.value : "0");
       if (dom.auctionTitle) dom.auctionTitle.textContent = t("auction.title", { side: sideLabel(side) });
-      if (dom.auctionSub) dom.auctionSub.innerHTML = t("auction.sub", { have: state.crystals[side] || 0, max }) + untimedNote;
+      if (dom.auctionSub) dom.auctionSub.innerHTML = t("auction.sub", { have: state.crystals[side] || 0, max, min: MIN_BID }) + untimedNote;
       if (dom.auctionOptions) {
         dom.auctionOptions.innerHTML = "";
         setAttr(dom.auctionOptions, "aria-label", t("auction.quick"));
@@ -3072,7 +3144,7 @@
         const b = document.createElement("button");
         b.type = "button";
         b.className = "btn btn-ghost auction-option";
-        const allIn = n > 5 * BID_STEP;
+        const allIn = isAllInQuickAmount(n, max);
         b.textContent = allIn ? t("auction.allIn", { n }) : `${n}◆`;
         setAttr(b, "aria-label", t("auction.optionAria", { n }));
         b.addEventListener("click", () => selectAuctionAmount(n));
@@ -3080,10 +3152,10 @@
         auctionOptionButtons.push({ b, n });
       }
       if (dom.auctionAmount) {
-        dom.auctionAmount.min = "0"; dom.auctionAmount.step = String(BID_STEP); dom.auctionAmount.max = String(max);
+        dom.auctionAmount.min = "0"; dom.auctionAmount.step = "1"; dom.auctionAmount.max = String(max);
         dom.auctionAmount.value = keep;
       }
-      if (dom.auctionCustomLabel) dom.auctionCustomLabel.textContent = t("auction.custom", { max });
+      if (dom.auctionCustomLabel) dom.auctionCustomLabel.textContent = t("auction.custom", { min: MIN_BID, max });
       if (dom.btnAuctionPass) dom.btnAuctionPass.textContent = t("auction.pass");
       if (dom.btnAuctionLock) dom.btnAuctionLock.textContent = t("auction.lock");
       if (fresh) showAuctionError("");
@@ -3671,7 +3743,20 @@
   function themeSelects() { return [dom.themeSelect, dom.optThemeSelect].filter(Boolean); }
   function syncThemeSelects() {
     const desc = themeDescription(activeThemeId);
-    themeSelects().forEach(sel => { sel.value = activeThemeId; sel.title = desc; });
+    const title = roomThemeLocked ? desc + (desc ? " — " : "") + t("online.themeLocked") : desc;
+    themeSelects().forEach(sel => { sel.value = activeThemeId; sel.title = title; sel.disabled = roomThemeLocked; });
+  }
+  // Online: the room's (host's) theme is shown on both clients for the whole duel without touching this
+  // player's saved preference; the pickers are locked meanwhile and the preference returns afterwards.
+  function applyRoomTheme(id) {
+    if (!id || !SG.THEMES || !Object.prototype.hasOwnProperty.call(SG.THEMES, id)) return;   // legacy room: keep your own
+    roomThemeLocked = true;
+    setTheme(id, false);
+  }
+  function releaseRoomTheme() {
+    if (!roomThemeLocked) return;
+    roomThemeLocked = false;
+    setTheme(readThemePreference(), false);
   }
   // (Re)fill both pickers; called at boot and on language change so names follow the language.
   function buildThemeOptions() {
@@ -3708,7 +3793,7 @@
     }
   }
   themeSelects().forEach(sel => {
-    sel.addEventListener("change", e => setTheme(e.target.value));
+    sel.addEventListener("change", e => { if (roomThemeLocked) { syncThemeSelects(); return; } setTheme(e.target.value); });
     // Intent to change skin: pre-render the other themes' icons while the player is still choosing.
     ["pointerenter", "focus", "pointerdown"].forEach(type => sel.addEventListener(type, requestThemeWarm));
   });
@@ -3745,20 +3830,102 @@
   if (dom.btnDescend) dom.btnDescend.addEventListener("click", () => startDescent());
 
   /* ---- Online Duel wiring ---- */
-  // net.js reports i18n keys ("net.*"); anything else is a raw SDK message shown as-is.
-  function showNetError(err) {
-    const b = document.createElement("b");
-    b.style.color = "var(--ember)";
-    b.textContent = /^net\./.test(err) ? t(err) : err;
-    dom.onlineStatus.innerHTML = ""; dom.onlineStatus.appendChild(b);
+  // The room's settings are the host's main-menu choices (moves per round, turn timer, difficulty, Warden,
+  // piece theme, Furies, Styx Hazards, Harrower drag), captured once when the room is created. There is a
+  // single set of controls — the main menu; the lobby shows the settings read-only: to the host before and
+  // after creating the room, and to the guest before they confirm the join (and in the match log).
+  function readMenuRoomSettings() {
+    return {
+      movesPerRound: dom.movesPerRound ? parseInt(dom.movesPerRound.value, 10) : 3,
+      planSeconds: dom.planSeconds ? normalizePlanSeconds(dom.planSeconds.value) : PLAN_SECONDS_DEFAULT,
+      difficulty: dom.difficulty ? dom.difficulty.value : "normal",
+      persona: dom.persona ? dom.persona.value : "random",
+      theme: activeThemeId,
+      furies: !!(dom.furyToggle && dom.furyToggle.checked),
+      hazards: !!(dom.hazardToggle && dom.hazardToggle.checked),
+      harrowerDrag: !!(dom.harrowerToggle && dom.harrowerToggle.checked),
+    };
   }
+  // Label/value rows (plain text, localized) describing a normalized room config.
+  function roomSettingsRows(cfg) {
+    const onOff = v => t(v ? "online.on" : "online.off");
+    const botOnly = v => t("online.botOnly", { value: v });
+    return [
+      { label: t("start.movesPerRound"), value: String(cfg.movesPerRound) },
+      { label: t("start.planTimer"), value: t("online.timerUntimed", { time: t("timer.opt" + cfg.planSeconds) }) },
+      { label: t("start.difficulty"), value: botOnly(t("difficulty." + cfg.difficulty)) },
+      { label: t("start.warden"), value: botOnly(t("persona." + cfg.persona)) },
+      { label: t("themeLabel"), value: cfg.theme ? themeDisplayName(cfg.theme) : t("online.themeOwn") },
+      { label: t("online.sumFuries"), value: onOff(cfg.furies) },
+      { label: t("online.sumHazards"), value: onOff(cfg.hazards) },
+      { label: t("online.sumHarrower"), value: onOff(cfg.harrowerDrag) },
+    ];
+  }
+  function renderRoomSummary(el, cfg) {
+    if (!el) return;
+    el.innerHTML = "";
+    for (const row of roomSettingsRows(cfg)) {
+      const dt = document.createElement("dt"); dt.textContent = row.label;
+      const dd = document.createElement("dd"); dd.textContent = row.value;
+      el.appendChild(dt); el.appendChild(dd);
+    }
+  }
+  function normalizedMenuSettings() {
+    const raw = Object.assign({ v: SG.Net && SG.Net.CONFIG_VERSION || 2, seed: 0 }, readMenuRoomSettings());
+    return SG.Net && typeof SG.Net.normalizeConfig === "function" ? SG.Net.normalizeConfig(raw, "") : raw;
+  }
+  // net.js reports i18n keys ("net.*"); anything else is a raw SDK message shown as-is.
+  function netErrorText(err) { return /^net\./.test(err) ? t(err) : String(err); }
+  function renderOnlineLobby() {
+    const L = onlineLobby;
+    const inRoom = L.phase === "hosting" || L.phase === "preview" || L.phase === "joining";
+    if (dom.onlineSetup) dom.onlineSetup.classList.toggle("hidden", inRoom);
+    if (dom.onlineRoomInfo) dom.onlineRoomInfo.classList.toggle("hidden", !inRoom);
+    if (!inRoom) renderRoomSummary(dom.onlineCreateSummary, normalizedMenuSettings());
+    if (dom.btnCreateRoom) dom.btnCreateRoom.disabled = L.phase === "creating" || L.phase === "peeking";
+    if (dom.btnJoinRoom) dom.btnJoinRoom.disabled = L.phase === "creating" || L.phase === "peeking";
+    if (inRoom) {
+      if (dom.onlineRoomTitle) dom.onlineRoomTitle.textContent = t(L.phase === "hosting" ? "online.roomSettings" : "online.previewTitle", { code: L.code });
+      if (dom.onlineRoomNote) dom.onlineRoomNote.textContent = t(L.phase === "hosting" ? "online.hostNote" : "online.previewNote");
+      renderRoomSummary(dom.onlineRoomSummary, L.config);
+    }
+    const guest = L.phase === "preview" || L.phase === "joining";
+    if (dom.onlineJoinConfirm) dom.onlineJoinConfirm.classList.toggle("hidden", !guest);
+    if (dom.btnConfirmJoin) dom.btnConfirmJoin.disabled = L.phase === "joining";
+    // Status line: progress, the room code while hosting, or the last error / notice.
+    const st = dom.onlineStatus;
+    if (!st) return;
+    st.innerHTML = "";
+    if (L.error) {
+      const b = document.createElement("b");
+      b.style.color = "var(--ember)";
+      b.textContent = netErrorText(L.error);
+      st.appendChild(b);
+    } else if (L.notice) st.innerHTML = t(L.notice);           // trusted dictionary HTML
+    else if (L.phase === "creating") st.textContent = t("online.creating");
+    else if (L.phase === "peeking" || L.phase === "joining") st.textContent = t("online.joining");
+    else if (L.phase === "hosting") {
+      st.appendChild(document.createTextNode(t("online.codeLabel")));
+      st.appendChild(document.createElement("br"));
+      const code = document.createElement("span");
+      code.className = "room-code"; code.dir = "ltr"; code.textContent = L.code;
+      st.appendChild(code);
+      st.appendChild(document.createElement("br"));
+      st.appendChild(document.createTextNode(t("online.codeWait")));
+    }
+  }
+  function setOnlineLobby(next) {
+    onlineLobby = Object.assign({ token: ++onlineLobbyToken }, next);
+    renderOnlineLobby();
+    return onlineLobby.token;
+  }
+  const lobbyCurrent = token => token === onlineLobbyToken && !!dom.onlineScreen && !dom.onlineScreen.classList.contains("hidden");
   function openOnline() {
-    if (dom.onlineSetup) dom.onlineSetup.classList.remove("hidden");
-    if (dom.onlineStatus) dom.onlineStatus.innerHTML = "";
+    setOnlineLobby({ phase: "setup" });
     if (dom.onlineScreen) dom.onlineScreen.classList.remove("hidden");
   }
   if (SG.Net) {
-    SG.Net.onStart = (config) => startOnlineMatch(config, config.mySide || SG.Net.getSide());
+    SG.Net.onStart = (config) => { onlineLobbyToken++; startOnlineMatch(config, config.mySide || SG.Net.getSide()); };
     SG.Net.onBothPlans = (round, plans) => {
       // Resolve now if we're idle on that round; otherwise (e.g. mid-Replay) queue it.
       if (state.mode === "online" && !state.isReplay && state.scene === "planning" && round === state.roundNumber) resolveOnlineRound(plans);
@@ -3767,26 +3934,52 @@
     // Sealed pre-planning bids: both are in → reveal (or queue it if we're not at that auction yet).
     SG.Net.onBothBids = (round, bids) => applyOnlineBids(round, bids);
     SG.Net.onOpponentLeft = () => onlineOpponentLeft();
+    // Host: the guest joined but the room could not be started consistently (net.js already left it).
+    SG.Net.onStartFailed = (err) => setOnlineLobby({ phase: "setup", error: err || "net.startFailed" });
   }
   if (dom.btnOnline) dom.btnOnline.addEventListener("click", openOnline);
-  if (dom.btnOnlineClose) dom.btnOnlineClose.addEventListener("click", () => { if (SG.Net) SG.Net.leave(); showStart(); });
+  if (dom.btnOnlineClose) dom.btnOnlineClose.addEventListener("click", () => { onlineLobbyToken++; if (SG.Net) SG.Net.leave(); showStart(); });
   if (dom.btnCreateRoom) dom.btnCreateRoom.addEventListener("click", () => {
-
-    if (dom.onlineStatus) dom.onlineStatus.textContent = t("online.creating");
-    SG.Net.createRoom({ furies: dom.onlineFury && dom.onlineFury.checked, harrowerDrag: dom.onlineHarrower && dom.onlineHarrower.checked }, (err, res) => {
-      if (err) { showNetError(err); return; }
-      if (dom.onlineSetup) dom.onlineSetup.classList.add("hidden");
-      dom.onlineStatus.innerHTML = `${t("online.codeLabel")}<br><span class="room-code" dir="ltr">${res.code}</span><br>${t("online.codeWait")}`;
+    if (!SG.Net) { setOnlineLobby({ phase: "setup", error: "net.unavailable" }); return; }
+    if (onlineLobby.phase === "creating") return;
+    // Captured now, from the main menu: what is written to the room is what both players will play.
+    const settings = readMenuRoomSettings();
+    const token = setOnlineLobby({ phase: "creating" });
+    SG.Net.createRoom(settings, (err, res) => {
+      if (!lobbyCurrent(token)) return;
+      if (err) { setOnlineLobby({ phase: "setup", error: err }); return; }
+      setOnlineLobby({ phase: "hosting", code: res.code, config: res.config || normalizedMenuSettings() });
     });
   });
-  if (dom.btnJoinRoom) dom.btnJoinRoom.addEventListener("click", () => {
-
+  // Joining is two steps: look at the room (read-only) and show the host's settings, then confirm.
+  function lookUpRoom() {
+    if (!SG.Net) { setOnlineLobby({ phase: "setup", error: "net.unavailable" }); return; }
+    if (onlineLobby.phase === "peeking" || onlineLobby.phase === "creating") return;
     const codeVal = dom.joinCode ? dom.joinCode.value : "";
-    if (dom.onlineStatus) dom.onlineStatus.textContent = t("online.joining");
-    SG.Net.joinRoom(codeVal, (err) => {
-      if (err) { showNetError(err); return; }
-      // onStart fires from the SDK callback and launches the match
+    const token = setOnlineLobby({ phase: "peeking" });
+    SG.Net.peekRoom(codeVal, (err, info) => {
+      if (!lobbyCurrent(token)) return;
+      if (err) { setOnlineLobby({ phase: "setup", error: err }); return; }
+      setOnlineLobby({ phase: "preview", code: info.code, config: info.config });
+      if (dom.btnConfirmJoin && dom.btnConfirmJoin.focus) dom.btnConfirmJoin.focus();
     });
+  }
+  if (dom.btnJoinRoom) dom.btnJoinRoom.addEventListener("click", lookUpRoom);
+  if (dom.joinCode) dom.joinCode.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); lookUpRoom(); } });
+  if (dom.btnConfirmJoin) dom.btnConfirmJoin.addEventListener("click", () => {
+    const L = onlineLobby;
+    if (L.phase !== "preview" || !SG.Net) return;
+    const token = setOnlineLobby({ phase: "joining", code: L.code, config: L.config });
+    SG.Net.joinRoom(L.code, (err) => {
+      if (!lobbyCurrent(token)) return;     // started (onStart bumps the token) or abandoned
+      if (err) setOnlineLobby({ phase: "setup", error: err });
+      // success: onStart fires from the SDK callback and launches the match with the room's settings
+    });
+  });
+  // While the seat claim / start confirmation is in flight, cancelling must release the seat too.
+  if (dom.btnCancelJoin) dom.btnCancelJoin.addEventListener("click", () => {
+    if (onlineLobby.phase === "joining" && SG.Net) SG.Net.leave();
+    setOnlineLobby({ phase: "setup" });
   });
   if (dom.btnMirror) dom.btnMirror.addEventListener("click", () => { refreshMirror(); dom.mirrorScreen.classList.remove("hidden"); });
   if (dom.btnMirrorClose) dom.btnMirrorClose.addEventListener("click", () => dom.mirrorScreen.classList.add("hidden"));
@@ -3903,6 +4096,8 @@
     if (dom.optionsScreen) dom.optionsScreen.classList.add("hidden");
     if (dom.onlineScreen) dom.onlineScreen.classList.add("hidden");
     if (state && state.mode === "online" && SG.Net) SG.Net.leave();
+    onlineLobbyToken++;                 // any pending lobby request is now stale
+    releaseRoomTheme();                 // back to this player's own saved piece theme
     runState = null;
   }
   function showGameOver() {
@@ -3938,10 +4133,13 @@
       if (state.runOutcome) { const m = loadStore("sg.mirror", {}); html += `<div class="ledger-best">${t("ledger.descent", { n: state.run ? state.run.chamber : 0, total: CHAMBERS.length, obols: state.obolsEarned || 0, bank: m.obols || 0 })}</div>`; }
       dom.ledger.innerHTML = html;
     }
+    // Online: a rematch needs a new room (both players must agree on it), so only Main Menu is offered.
+    dom.btnPlayAgain.classList.toggle("hidden", state.mode === "online");
     dom.gameOverScreen.classList.remove("hidden");
   }
   function startMatch(mode, humanSide, furiesEnabled, opts) {
     opts = opts || {};
+    releaseRoomTheme();
     state = freshState();
     nextPieceId = 1;
     state.mode = mode;
@@ -4073,6 +4271,7 @@
     }
     if (!dom.gameOverScreen.classList.contains("hidden")) showGameOver();
     if (dom.trialsScreen && !dom.trialsScreen.classList.contains("hidden")) populateTrials();
+    if (dom.onlineScreen && !dom.onlineScreen.classList.contains("hidden")) renderOnlineLobby();
     if (dom.mirrorScreen && !dom.mirrorScreen.classList.contains("hidden")) refreshMirror();
     if (dom.helpScreen && !dom.helpScreen.classList.contains("hidden")) decorateHelpRoles();
     if (choiceOpen()) cancelChoice();               // its text was generated in the old language
