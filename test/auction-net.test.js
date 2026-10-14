@@ -14,13 +14,16 @@ function createRealtimeDb() {
   const failedSets = new Set();
   const failedGets = new Set();
   const failedGetCounts = new Map();
+  const failedUpdateCounts = new Map();
   const pendingSets = new Map();
   const pendingGets = new Map();
   const pendingUpdates = new Map();
+  const heldEmits = new Map();
   const writes = [];
   const offCalls = [];
   const getCalls = [];
   const updateCalls = [];
+  const disconnectHooks = [];
 
   function pathParts(pathname) { return pathname.split("/").filter(Boolean); }
   function readPath(pathname) {
@@ -45,7 +48,21 @@ function createRealtimeDb() {
     const callbacks = listeners.get(pathname);
     if (!callbacks) return;
     const snap = snapshot(readPath(pathname));
+    const held = heldEmits.get(pathname);
+    if (held) {
+      held.push(snap);
+      return;
+    }
     for (const callback of [...callbacks]) callback(snap);
+  }
+  function applyUpdate(pathname, values) {
+    const next = Object.assign({}, readPath(pathname) || {});
+    for (const [key, value] of Object.entries(values)) {
+      if (value === null) delete next[key];
+      else next[key] = value;
+    }
+    writePath(pathname, next);
+    emit();
   }
   function ref(pathname) {
     return {
@@ -65,19 +82,20 @@ function createRealtimeDb() {
       },
       update(values) {
         updateCalls.push({ pathname, values });
+        const failuresLeft = failedUpdateCounts.get(pathname) || 0;
+        if (failuresLeft > 0) {
+          failedUpdateCounts.set(pathname, failuresLeft - 1);
+          return Promise.reject(new Error("permission denied"));
+        }
         const pending = pendingUpdates.get(pathname);
         if (pending && pending.length) {
           const operation = pending.shift();
           operation.commit = () => {
-            const current = readPath(pathname) || {};
-            writePath(pathname, Object.assign({}, current, values));
-            emit();
+            applyUpdate(pathname, values);
           };
           return operation.promise;
         }
-        const current = readPath(pathname) || {};
-        writePath(pathname, Object.assign({}, current, values));
-        emit();
+        applyUpdate(pathname, values);
         return Promise.resolve();
       },
       get() {
@@ -109,7 +127,23 @@ function createRealtimeDb() {
         }
       },
       onDisconnect() {
-        return { set() { return Promise.resolve(); } };
+        return {
+          set(value) {
+            disconnectHooks.push({
+              pathname, value, active: true, cancelled: false, fired: false,
+            });
+            return Promise.resolve();
+          },
+          cancel() {
+            for (const hook of disconnectHooks) {
+              if (hook.pathname === pathname && hook.active) {
+                hook.active = false;
+                hook.cancelled = true;
+              }
+            }
+            return Promise.resolve();
+          },
+        };
       },
     };
   }
@@ -120,8 +154,20 @@ function createRealtimeDb() {
     database() { return { ref }; },
   };
   return {
-    data, failedSets, failedGets, writes, offCalls, getCalls, updateCalls, firebase,
+    data, failedSets, failedGets, writes, offCalls, getCalls, updateCalls, disconnectHooks, firebase,
     seed: writePath,
+    set(pathname, value) {
+      writePath(pathname, value);
+      emit();
+    },
+    fireDisconnectHook(hook) {
+      if (!hook.active) return false;
+      hook.active = false;
+      hook.fired = true;
+      writePath(hook.pathname, hook.value);
+      emit();
+      return true;
+    },
     listenerCount(pathname) { return listeners.get(pathname)?.size || 0; },
     holdNextGet(pathname) {
       let resolve, reject;
@@ -135,6 +181,22 @@ function createRealtimeDb() {
     },
     failNextGet(pathname, count = 1) {
       failedGetCounts.set(pathname, count);
+    },
+    failNextUpdate(pathname, count = 1) {
+      failedUpdateCounts.set(pathname, count);
+    },
+    holdEmits(pathname) {
+      const snapshots = [];
+      heldEmits.set(pathname, snapshots);
+      return {
+        release() {
+          if (heldEmits.get(pathname) === snapshots) heldEmits.delete(pathname);
+          for (const snap of snapshots) {
+            const callbacks = listeners.get(pathname);
+            if (callbacks) for (const callback of [...callbacks]) callback(snap);
+          }
+        },
+      };
     },
     holdNextUpdate(pathname) {
       let resolve, reject;
@@ -403,7 +465,7 @@ test("permanent start confirmation write failure fails both peers closed and rel
   await assertHandshakeFailsClosed("start-write");
 });
 
-test("leaving while the guest awaits start prevents either peer from starting", async () => {
+test("guest leaving during the host config read reopens the room for a clean new guest", async () => {
   const db = createRealtimeDb();
   const host = loadNet(db.firebase).Net;
   const guest = loadNet(db.firebase).Net;
@@ -427,6 +489,7 @@ test("leaving while the guest awaits start prevents either peer from starting", 
 
   pendingConfigRead.resolve();
   await new Promise(resolve => setTimeout(resolve, 50));
+  await waitFor(() => db.data.rooms[code].status === "waiting" && !("start" in db.data.rooms[code]));
   await waitForAsyncCallbacks();
   assert.deepEqual(hostStarts, [], "the host must abandon its pending handshake after the guest leaves");
   assert.deepEqual(guestStarts, [], "the late host confirmation cannot start a guest who left");
@@ -434,6 +497,89 @@ test("leaving while the guest awaits start prevents either peer from starting", 
   assert.deepEqual(joinResults, [], "an explicitly abandoned join does not complete later");
   assert.equal(guest.getCode(), null);
   assert.equal(db.data.rooms[code].guest.present, false);
+
+  // Keep the fresh seat's value event queued: the host still has the first guest's stale false presence
+  // observation when the new status event starts its handshake. Its fresh database read must win.
+  const heldGuestPresence = db.holdEmits(`${roomPath}/guest/present`);
+  const nextGuest = loadNet(db.firebase).Net;
+  nextGuest.onStart = config => guestStarts.push(config);
+  const rejoin = joinRoom(nextGuest, code);
+  await waitFor(() => hostStarts.length === 1 && guestStarts.length === 1);
+  assert.equal(await rejoin, null, "the second guest completes the normal start handshake");
+  assert.equal(db.data.rooms[code].status, "playing");
+  assert.equal(db.data.rooms[code].guest.present, true);
+  assert.equal(db.writes.filter(write => write.pathname === `${roomPath}/start`).length, 1,
+    "the new guest receives a fresh confirmation rather than a stale one");
+  heldGuestPresence.release();
+  await waitForAsyncCallbacks();
+  assert.deepEqual(opponentLeft, [],
+    "the stale false observation cannot make the successfully joined new guest look absent");
+  assert.equal(hostStarts[0].mySide, "light");
+  assert.equal(guestStarts[0].mySide, "dark");
+});
+
+test("guest leaving while the host start write is pending cancels the host start and clears confirmation", async () => {
+  const db = createRealtimeDb();
+  const host = loadNet(db.firebase).Net;
+  const guest = loadNet(db.firebase).Net;
+  const created = await createRoom(host, { movesPerRound: 4, seed: 1234 });
+  const { code } = created.result;
+  const roomPath = `rooms/${code}`;
+  const pendingStartWrite = db.holdNextSet(`${roomPath}/start`);
+  const hostStarts = [];
+  const opponentLeft = [];
+  host.onStart = config => hostStarts.push(config);
+  host.onOpponentLeft = () => opponentLeft.push(true);
+
+  guest.joinRoom(code, () => {});
+  await waitFor(() => db.writes.some(write => write.pathname === `${roomPath}/start`));
+  assert.ok(db.data.rooms[code].start, "the held host write has made its optimistic value visible");
+
+  guest.leave();
+  await waitFor(() => db.data.rooms[code].status === "waiting" && !("start" in db.data.rooms[code]));
+  pendingStartWrite.resolve();
+  await waitForAsyncCallbacks();
+
+  assert.deepEqual(hostStarts, [], "the host cannot start after the pending write resolves");
+  assert.deepEqual(opponentLeft, [], "an unstarted/cancelled handshake is not reported as opponent-left");
+  assert.equal(host.getCode(), code, "the host remains in its room waiting for another guest");
+  assert.equal(db.data.rooms[code].status, "waiting");
+  assert.equal("start" in db.data.rooms[code], false, "the abandoned confirmation is removed");
+  assert.equal(db.data.rooms[code].guest.present, false);
+});
+
+test("repeated room-reopen failures make the host fail closed and report start failure", async () => {
+  const db = createRealtimeDb();
+  const host = loadNet(db.firebase).Net;
+  const guest = loadNet(db.firebase).Net;
+  const created = await createRoom(host, { movesPerRound: 4, seed: 1234 });
+  const { code } = created.result;
+  const roomPath = `rooms/${code}`;
+  const pendingStartWrite = db.holdNextSet(`${roomPath}/start`);
+  const hostStarts = [];
+  const opponentLeft = [];
+  const startFailures = [];
+  host.onStart = config => hostStarts.push(config);
+  host.onOpponentLeft = () => opponentLeft.push(true);
+  host.onStartFailed = error => startFailures.push(error);
+
+  guest.joinRoom(code, () => {});
+  await waitFor(() => db.writes.some(write => write.pathname === `${roomPath}/start`));
+  db.failNextUpdate(roomPath, 4);
+  guest.leave();
+
+  await waitFor(() => startFailures.length === 1, 7000);
+  pendingStartWrite.resolve();
+  await waitForAsyncCallbacks();
+
+  assert.deepEqual(hostStarts, [], "a room that could not be reopened is never started by the host");
+  assert.deepEqual(opponentLeft, [], "failure during setup is not reported as a started-match departure");
+  assert.deepEqual(startFailures, ["net.startFailed"]);
+  assert.equal(db.updateCalls.filter(call =>
+    call.pathname === roomPath && call.values.status === "waiting").length, 4,
+  "the room reset uses the bounded initial attempt plus three retries");
+  assert.equal(host.getCode(), null, "the host leaves after all room-reset attempts fail");
+  assert.equal(db.data.rooms[code].host.present, false, "the host presence is released on fail-closed");
 });
 
 test("room preview reports missing and full rooms without claiming or subscribing", async () => {
@@ -807,4 +953,110 @@ test("a failed stale guest claim does not clear a newer room session", async () 
     "the stale failure cannot clear the newer room side");
   assert.equal(db.listenerCount(`rooms/${newerRoom.result.code}/status`), 1);
   assert.equal(db.listenerCount(`rooms/${newerRoom.result.code}/rounds`), 1);
+});
+
+test("leaving guest A cancels its disconnect hook before guest B claims the same seat", async () => {
+  const db = createRealtimeDb();
+  const code = "HOOK";
+  const roomPath = `rooms/${code}`;
+  const seatPath = `${roomPath}/guest/present`;
+  db.seed(roomPath, {
+    config: {},
+    host: { present: true },
+    status: "waiting",
+  });
+
+  const guestA = loadNet(db.firebase).Net;
+  guestA.joinRoom(code, () => {});
+  await waitFor(() => db.disconnectHooks.some(hook => hook.pathname === seatPath));
+  const guestAHook = db.disconnectHooks.find(hook => hook.pathname === seatPath);
+  assert.equal(guestAHook.active, true, "guest A registered an active disconnect hook");
+
+  guestA.leave();
+  assert.equal(guestAHook.cancelled, true, "leaving guest A cancels its registered hook");
+  assert.equal(db.data.rooms[code].guest.present, false, "guest A's seat is explicitly released");
+
+  // Guest B joins after A has left; the old server-side hook must not undo B's new claim.
+  db.seed(`${roomPath}/status`, "waiting");
+  const guestB = loadNet(db.firebase).Net;
+  guestB.joinRoom(code, () => {});
+  await waitFor(() => db.disconnectHooks.filter(hook => hook.pathname === seatPath).length === 2);
+  const guestBHook = db.disconnectHooks.filter(hook => hook.pathname === seatPath)[1];
+  assert.equal(db.data.rooms[code].guest.present, true, "guest B now owns the guest seat");
+  assert.equal(db.fireDisconnectHook(guestAHook), false, "the delayed old hook is no longer armed");
+  assert.equal(db.data.rooms[code].guest.present, true, "the old hook cannot clear guest B's presence");
+  assert.equal(guestBHook.active, true, "guest B's own disconnect hook remains armed");
+
+  guestB.leave();
+});
+
+test("a guest whose seat becomes absent fails closed without clearing a later guest", async () => {
+  const db = createRealtimeDb();
+  const code = "LOST";
+  const roomPath = `rooms/${code}`;
+  const seatPath = `${roomPath}/guest/present`;
+  db.seed(roomPath, {
+    config: {},
+    host: { present: true },
+    status: "waiting",
+  });
+  const guest = loadNet(db.firebase).Net;
+  const starts = [];
+  const callbacks = [];
+  guest.onStart = config => starts.push(config);
+
+  guest.joinRoom(code, error => callbacks.push(error));
+  await waitFor(() => db.disconnectHooks.some(hook => hook.pathname === seatPath));
+  const guestHook = db.disconnectHooks.find(hook => hook.pathname === seatPath);
+  assert.equal(db.data.rooms[code].guest.present, true);
+
+  db.set(seatPath, false);
+  await waitFor(() => callbacks.length === 1);
+  assert.deepEqual(callbacks, ["net.startFailed"], "losing the seat fails the pending join");
+  assert.deepEqual(starts, [], "the guest cannot start after its seat was lost");
+  assert.equal(guestHook.cancelled, true, "failure cancels the guest's own disconnect hook");
+  assert.deepEqual(db.writes.filter(write => write.pathname === seatPath && write.value === false), [],
+    "failure does not write false over a seat that may already belong to someone else");
+
+  // A replacement guest claims the now-free seat after guest B's loss notification.
+  db.set(seatPath, true);
+  assert.equal(db.data.rooms[code].guest.present, true);
+  assert.equal(db.fireDisconnectHook(guestHook), false, "the departed guest's hook cannot affect its replacement");
+  assert.equal(db.data.rooms[code].guest.present, true, "the replacement guest remains present");
+  assert.deepEqual(starts, []);
+  assert.deepEqual(callbacks, ["net.startFailed"], "the failed join callback runs only once");
+});
+
+test("host and guest leave cancel only their own seat disconnect hooks", async () => {
+  async function connectedRoom() {
+    const db = createRealtimeDb();
+    const host = loadNet(db.firebase, [], () => 0).Net;
+    const created = await createRoom(host);
+    const guest = loadNet(db.firebase).Net;
+    guest.joinRoom(created.result.code, () => {});
+    await waitFor(() => db.disconnectHooks.some(hook =>
+      hook.pathname === `rooms/${created.result.code}/guest/present`));
+    return { db, host, guest, code: created.result.code };
+  }
+
+  const guestLeaveRoom = await connectedRoom();
+  const guestPath = `rooms/${guestLeaveRoom.code}/guest/present`;
+  const hostPath = `rooms/${guestLeaveRoom.code}/host/present`;
+  const guestHook = guestLeaveRoom.db.disconnectHooks.find(hook => hook.pathname === guestPath);
+  const hostHook = guestLeaveRoom.db.disconnectHooks.find(hook => hook.pathname === hostPath);
+  guestLeaveRoom.guest.leave();
+  assert.equal(guestHook.cancelled, true, "guest leave cancels the guest path hook");
+  assert.equal(hostHook.active, true, "guest leave leaves the host path hook armed");
+
+  const hostLeaveRoom = await connectedRoom();
+  const otherGuestPath = `rooms/${hostLeaveRoom.code}/guest/present`;
+  const otherHostPath = `rooms/${hostLeaveRoom.code}/host/present`;
+  const otherGuestHook = hostLeaveRoom.db.disconnectHooks.find(hook => hook.pathname === otherGuestPath);
+  const otherHostHook = hostLeaveRoom.db.disconnectHooks.find(hook => hook.pathname === otherHostPath);
+  const holdHostPresence = hostLeaveRoom.db.holdEmits(otherHostPath);
+  hostLeaveRoom.host.leave();
+  assert.equal(otherHostHook.cancelled, true, "host leave cancels the host path hook");
+  assert.equal(otherGuestHook.active, true, "host leave does not cancel the guest path hook");
+  holdHostPresence.release();
+  hostLeaveRoom.guest.leave();
 });

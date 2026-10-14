@@ -29,7 +29,16 @@
   // config; `startWaiter` = the guest claimed its seat and waits for that confirmation; `oppGone` = the
   // opponent's presence flag was last seen false; `timers` = pending retry/timeout timers of this room.
   let starting = false, startWaiter = null, oppGone = false, timers = [];
+  // Host: identity token of the start handshake in progress (null when none). A guest departure observed
+  // before the host commits replaces/clears it, so every pending step of that handshake becomes stale.
+  let hostHandshake = null;
+  // The one server-side onDisconnect hook this client registered for its own seat flag:
+  // { ref: <that presence ref>, path: "rooms/<code>/<host|guest>/present" }, or null. Firebase keeps such a
+  // hook on the server until this connection drops — even after we left the room — so a hook left behind
+  // could later mark a NEW occupant of the same seat absent. Leaving therefore cancels it (releasePresence).
+  let presenceHook = null;
   const STALE = { stale: true };                 // rejection marker: the room attempt was abandoned
+  const GUEST_GONE = { guestGone: true };        // rejection marker: the guest left before the start commit
   // Bounded retries for the start handshake's reads/writes: 1 attempt + one per delay, then fail closed.
   const START_RETRY_DELAYS_MS = [250, 750, 1500];
   const GUEST_START_TIMEOUT_MS = 20000;          // the guest gives up waiting for the host's confirmation
@@ -145,7 +154,7 @@
         status: "waiting",
       }).then(() => {
         if (roomRef !== ref) return;   // left before the room was created
-        roomRef.child("host/present").onDisconnect().set(false);
+        armPresenceHook(ref, "host", code);
         watchStart(); watchPresence(); watchRounds();
         cb(null, { code: code, mySide: mySide, config: normalizeConfig(config, code) });
       }).catch(e => cb(String(e && e.message || e)));
@@ -181,8 +190,14 @@
       const clearLocal = () => { if (roomRef === ref) { roomRef = null; code = null; mySide = null; resetRoomState(); } };
       // The guest seat was claimed but the join was abandoned meanwhile: free the seat again and, if
       // nothing else took over the room slot yet, drop the half-joined local state (no listeners exist).
+      // This attempt registers its onDisconnect hook only after this point, so it has none of its own; any
+      // hook this client still holds on the seat is cancelled too — unless a newer live attempt of ours
+      // owns that very seat (cancel is per client and path, so it would strip the newer attempt's hook).
+      const seatPath = "rooms/" + inCode + "/guest/present";
       const abandon = () => {
-        try { ref.child("guest/present").set(false).catch(() => {}); } catch (e) { /* ignore */ }
+        const seat = ref.child("guest/present");
+        try { seat.set(false).catch(() => {}); } catch (e) { /* ignore */ }
+        if (!presenceHook || presenceHook.path !== seatPath) cancelHook(seat);
         clearLocal();
       };
       ref.get().then(snap => {
@@ -193,7 +208,7 @@
         code = inCode; mySide = "dark"; roomRef = ref; resetRoomState();
         return ref.update({ guest: { present: true }, status: "playing" }).then(() => {
           if (stale() || roomRef !== ref) { abandon(); return; }
-          ref.child("guest/present").onDisconnect().set(false);
+          armPresenceHook(ref, "guest", inCode);
           watchPresence(); watchRounds();
           // Not started yet: wait until the host confirms the exact config it starts with (cb runs then).
           awaitHostStart(ref, inCode, v.config, stale, finish);
@@ -235,24 +250,57 @@
         .catch(e => console.error("submitPlan", e));
     },
 
-    leave() {
-      roomAttempt++;
-      try {
-        if (roomRef) {
-          unsubscribeAll();
-          roomRef.off();
-          roomRef.child((mySide === "light" ? "host" : "guest") + "/present").set(false);
-        }
-      } catch (e) { /* ignore */ }
-      roomRef = null; code = null; mySide = null; resetRoomState();
-    },
+    leave() { leaveRoom(true); },
   };
+
+  // Leaves the current room. writeSeat=false is for a seat that is no longer ours (it was already seen
+  // false — e.g. a stale disconnect hook freed it, and someone else may hold it by now): our flag is not
+  // written then, so we can never mark that new occupant absent. Either way our own onDisconnect hook is
+  // cancelled, after the explicit write (both go out in order on the same connection, so if the connection
+  // drops in between, the hook still frees the seat at that moment rather than leaving it claimed).
+  function leaveRoom(writeSeat) {
+    roomAttempt++;
+    try {
+      if (roomRef) {
+        unsubscribeAll();
+        roomRef.off();
+        if (writeSeat) roomRef.child((mySide === "light" ? "host" : "guest") + "/present").set(false);
+      }
+    } catch (e) { /* ignore */ }
+    releasePresenceHook();
+    roomRef = null; code = null; mySide = null; resetRoomState();
+  }
+
+  // Registers the server-side "seat flag -> false on disconnect" hook for our own seat, remembering the
+  // exact ref and path so leaving cancels exactly that registration (host: host/present, guest: guest/present).
+  function armPresenceHook(ref, seat, roomCode) {
+    const presRef = ref.child(seat + "/present");
+    presRef.onDisconnect().set(false);
+    presenceHook = { ref: presRef, path: "rooms/" + roomCode + "/" + seat + "/present" };
+  }
+  // Cancels the tracked hook (if any) and forgets it. Fire-and-forget: nothing waits on the result.
+  function releasePresenceHook() {
+    const h = presenceHook;
+    presenceHook = null;
+    if (h) cancelHook(h.ref);
+  }
+  // onDisconnect().cancel() on one presence ref; failures (offline, older SDK/mocks without cancel) are
+  // swallowed — the explicit `false` write already marked the seat free.
+  function cancelHook(presRef) {
+    try {
+      const od = presRef.onDisconnect();
+      if (od && typeof od.cancel === "function") {
+        const p = od.cancel();
+        if (p && typeof p.catch === "function") p.catch(() => {});
+      }
+    } catch (e) { /* ignore */ }
+  }
 
   function resetRoomState() {
     unsubscribeAll();
     clearTimers();
     started = false; resolvedUpTo = -1; bidsResolvedUpTo = -1; bidAccepted = {}; lastRounds = {};
-    starting = false; startWaiter = null; oppGone = false;
+    starting = false; startWaiter = null; oppGone = false; hostHandshake = null;
   }
   function subscribe(ref, cb) { ref.on("value", cb); subs.push({ ref, cb }); }
   function unsubscribeAll() {
@@ -323,30 +371,64 @@
      3. The guest starts when the confirmation's hash matches its normalized config snapshot (re-reading
         the room's config, bounded, if it does not), so both peers apply the identical canonical config.
      Any step that still fails fails closed: the failing side leaves the room and reports a localized error
-     ("net.startFailed"); the other side sees the departure (guest: join error; host: opponent left). */
+     ("net.startFailed"); the other side sees the departure (guest: join error; host: opponent left).
+     If the guest leaves before the host commits (its seat reads absent in step 2, or its presence flips to
+     false while the host is still confirming), the host never starts: it abandons that handshake and
+     reopens the room ("waiting", stale confirmation removed) so it keeps waiting under the same code.
+     Symmetrically, a waiting guest whose own seat flag turns false (it did not write that itself) treats
+     the seat as lost and fails with "net.startFailed" without writing the flag, so a seat freed under it
+     (and possibly re-taken by a new guest) can never start two guests. */
   function watchStart() {
     // Host waits for the guest to flip status to "playing".
     const ref = roomRef, attempt = roomAttempt, roomCode = code;
-    const alive = () => roomRef === ref && attempt === roomAttempt;
+    const roomAlive = () => roomRef === ref && attempt === roomAttempt;
     subscribe(ref.child("status"), s => {
-      if (s.val() !== "playing" || started || starting || !alive()) return;
-      starting = true;
+      if (s.val() !== "playing" || started || starting || !roomAlive()) return;
+      const hs = {};
+      hostHandshake = hs; starting = true;
+      // This handshake only: dead once the room is left or the guest's departure aborted it.
+      const alive = () => roomAlive() && hostHandshake === hs;
       let cfg = null;
-      withRetry(() => ref.child("config").get().then(c => { cfg = normalizeConfig(c.val(), roomCode); }), alive)
-        .then(() => withRetry(() => ref.child("start").set({ configHash: configFingerprint(cfg), at: Date.now() }), alive))
+      // The guest's seat is read fresh alongside the config (not taken from `oppGone`, which can still
+      // hold a previous guest's `false` when this status event is raised before the new seat's event).
+      withRetry(() => Promise.all([ref.child("config").get(), ref.child("guest/present").get()]).then(r => {
+        cfg = normalizeConfig(r[0].val(), roomCode);
+        return r[1].val() === true;
+      }), alive)
+        .then(present => {
+          if (!present) throw GUEST_GONE;
+          return withRetry(() => ref.child("start").set({ configHash: configFingerprint(cfg), at: Date.now() }), alive);
+        })
         .then(() => {
+          // A departure seen up to here (events are delivered before our write's ack) cleared hostHandshake.
           if (!alive() || started) return;
-          starting = false; started = true;
+          hostHandshake = null; starting = false; started = true;
           if (Net.onStart) Net.onStart(Object.assign({}, cfg, { mySide: mySide }));
-          // The guest gave up while we were confirming: report it now that the match exists.
-          if (alive() && oppGone && Net.onOpponentLeft) Net.onOpponentLeft();
         })
         .catch(e => {
+          if (e === GUEST_GONE) return abortHostStart(hs);
           if (e === STALE || !alive()) return;
           console.error("watchStart", e);
           failStart("net.startFailed");
         });
     });
+  }
+  // Host: the guest left before the start was committed. Drop that handshake (its pending steps go stale,
+  // so onStart can no longer run) and reopen the room for a new guest, removing any confirmation already
+  // written so it cannot start the next guest early. Only if the room cannot be reopened (bounded retries)
+  // does the host fail closed with the localized "net.startFailed".
+  function abortHostStart(hs) {
+    if (hostHandshake !== hs || started) return;
+    hostHandshake = null; starting = false;
+    const ref = roomRef, attempt = roomAttempt;
+    if (!ref) return;
+    const roomAlive = () => roomRef === ref && attempt === roomAttempt;
+    withRetry(() => ref.update({ status: "waiting", start: null }), roomAlive)
+      .catch(e => {
+        if (e === STALE || !roomAlive()) return;
+        console.error("reopen room", e);
+        failStart("net.startFailed");
+      });
   }
   // Host: fail closed — leave the room (the waiting guest sees the host gone) and surface the error.
   function failStart(key) {
@@ -363,10 +445,12 @@
       settled = true; startWaiter = null;
       if (timeout != null && typeof clearTimeout === "function") clearTimeout(timeout);
     };
-    const fail = key => {
+    const fail = (key, seatLost) => {
       if (settled || !alive()) return;
       settle();
-      Net.leave();          // frees the seat; anything still pending for this attempt becomes stale
+      // Frees the seat (unless it was already lost) and cancels our disconnect hook; anything still
+      // pending for this attempt becomes stale.
+      leaveRoom(!seatLost);
       finish(key);
     };
     const begin = cfg => {
@@ -381,6 +465,14 @@
       timeout = setTimeout(() => fail("net.startFailed"), GUEST_START_TIMEOUT_MS);
       timers.push(timeout);
     }
+    // Our own seat must stay ours until we start. An explicit `false` there that we did not write (we
+    // unsubscribe before writing it ourselves) means the seat was freed under us — e.g. a stale disconnect
+    // hook of an earlier guest of this room — so the host treats us as gone and may reopen the room for
+    // someone else: never start from it. Fail without touching the flag again (it may be a new guest's).
+    subscribe(ref.child("guest/present"), s => {
+      if (settled || !alive()) return;
+      if (s.exists() && s.val() === false) fail("net.startFailed", true);
+    });
     subscribe(ref.child("start"), s => {
       if (settled || checking || !alive()) return;
       const m = s.val();
@@ -405,10 +497,12 @@
     const opp = mySide === "light" ? "guest" : "host";
     oppGone = false;
     subscribe(roomRef.child(opp + "/present"), s => {
+      // Only an explicit `false` is a departure: a missing flag (no guest yet) is not.
       oppGone = s.exists() && s.val() === false;
       if (!oppGone) return;
       if (started) { if (Net.onOpponentLeft) Net.onOpponentLeft(); }
       else if (startWaiter) startWaiter.fail("net.startFailed");   // guest: the host left before starting
+      else if (hostHandshake) abortHostStart(hostHandshake);       // host: the guest left while confirming
     });
   }
 
