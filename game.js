@@ -317,20 +317,44 @@
   }
 
   /* ---- Opt-in render diagnostics (developer only) ----
-   * Off by default: while off, no extra timing calls are made and nothing is logged. Enable with the
-   * query flag `?sgperf=1`, with localStorage "sg.perf" = "1" (persists across reloads), or by calling
-   * `SG.perf.enable()` in the console. `SG.perf.report()` prints (console.table) and returns per-theme
-   * frame statistics; each theme switch logs ONE summary line after the following frames were observed.
-   * `SG.perf.reset()` clears the stats, `SG.perf.disable()` turns it off (pass `true` to also clear the
-   * persisted flag). Segment times are main-thread time spent issuing canvas commands; GPU rasterisation
-   * and compositing happen later and are only visible in the requestAnimationFrame interval figures. */
+   * Off by default: while off, no extra timing calls are made, no performance observers exist and
+   * nothing is logged. Enable with the query flag `?sgperf=1`, with localStorage "sg.perf" = "1"
+   * (persists across reloads), or by calling `SG.perf.enable()` in the console. `SG.perf.report()`
+   * prints (console.table) and returns per-theme frame statistics; each theme switch logs ONE summary
+   * line after the following frames were observed. `SG.perf.reset()` clears the stats,
+   * `SG.perf.disable()` turns it off (pass `true` to also clear the persisted flag).
+   * What is (and is not) measured:
+   * - Segment times (update/render/terrain/pieces/fx/screen) are main-thread time spent issuing canvas
+   *   commands. GPU rasterisation, compositing and display presentation happen later.
+   * - Frame intervals are deltas between requestAnimationFrame timestamps (frame START times). They are
+   *   NOT GPU presentation times; a GPU-bound frame only shows up indirectly, as a longer interval.
+   * - Where the browser supports it, Event Timing entries (input delay, handler time and duration up to
+   *   the next paint) and Long Animation Frame entries are collected. Both are attributed by their own
+   *   timestamps (input start / frame render start) to the theme that was active then, using a short
+   *   log of theme changes recorded while diagnostics are on.
+   * - Resource Timing entries are delivered only once a request has COMPLETED, asynchronously. They are
+   *   counted by their startTime: requests that started after diagnostics were enabled (so a Firebase
+   *   long poll already open at enable time is not counted), and per switch those that started inside
+   *   the switch window [handler start, summary) and had completed by the time the summary was logged
+   *   (a request still in flight then is not seen; a theme switch is expected to start none). Only
+   *   origin + path are kept (no query string / fragment). WebSocket traffic is not visible to Resource
+   *   Timing. JS heap figures exist only where `performance.memory` does.
+   * Every stored series is bounded (per-theme rings of PERF_RING frames, the last 20 switches, the last
+   * PERF_EVENT_LIMIT input events, PERF_THEME_LOG theme changes, PERF_RESOURCE_RING request starts).
+   * For GPU work use the browser profiler (see README). */
   const PERF_STORAGE_KEY = "sg.perf";
-  const PERF_RING = 600;              // recent frame intervals kept per theme (for percentiles)
+  const PERF_RING = 600;              // recent frames kept per theme (for percentiles)
   const PERF_LONG_FRAME_MS = 25;      // RAF interval counted as a visible hitch (> 1.5 frames at 60 Hz)
   const PERF_SWITCH_FRAMES = 60;      // frames observed after a theme switch before its summary is logged
+  const PERF_EVENT_LIMIT = 30;        // slow input events kept (Event Timing)
+  const PERF_EVENT_NAMES = ["pointerdown", "pointerup", "click", "keydown", "keyup", "input", "change"];
+  const PERF_THEME_LOG = 32;          // theme changes kept for timestamp attribution
+  const PERF_RESOURCE_RING = 64;      // recent request start times kept for per-switch windows
   const perf = {
-    on: false, buckets: new Map(), lastFrameTs: null, switchRec: null, switches: [],
-    iconMs: 0, iconSlices: 0, warmMs: 0, warmIcons: 0,
+    on: false, onSince: 0, buckets: new Map(), lastFrameTs: null, switchRec: null, switches: [],
+    iconMs: 0, iconSlices: 0, warmMs: 0, warmIcons: 0, warmSkipped: 0,
+    events: [], resources: 0, resourceNames: [], resourceStarts: [], themeLog: [], loafUnattributed: 0,
+    observers: [], observed: { event: false, loaf: false, resource: false },
   };
   const perfSeg = { update: 0, render: 0, terrain: 0, pieces: 0, figures: 0, fx: 0, screen: 0 };
   function perfNow() {
@@ -339,21 +363,30 @@
     } catch (e) { /* fall through */ }
     return Date.now();
   }
+  function perfHeapMB() {
+    try {
+      const m = typeof performance !== "undefined" && performance && performance.memory;
+      return m && typeof m.usedJSHeapSize === "number" ? m.usedJSHeapSize / 1048576 : null;
+    } catch (e) { return null; }
+  }
   function perfBucket(id) {
     let b = perf.buckets.get(id);
     if (!b) {
       b = { frames: 0, intervals: [], intervalSum: 0, intervalCount: 0, longFrames: 0, update: 0, render: 0, renderMax: 0,
-            terrain: 0, pieces: 0, piecesMax: 0, figures: 0, fx: 0, screen: 0 };
+            terrain: 0, pieces: 0, piecesMax: 0, figures: 0, fx: 0, screen: 0, renders: [], piecesRing: [],
+            loafs: 0, loafMax: 0, loafBlocking: 0 };
       perf.buckets.set(id, b);
     }
     return b;
   }
+  function perfPush(ring, v) { ring.push(v); if (ring.length > PERF_RING) ring.shift(); }
   function perfPercentile(values, q) {
     if (!values.length) return 0;
     const sorted = values.slice().sort((a, b) => a - b);
     return sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
   }
   const perfRound = v => Math.round(v * 100) / 100;
+  const perfRoundOrNull = v => (typeof v === "number" && isFinite(v) ? perfRound(v) : null);
   function perfRecordFrame(ts, themeId) {
     const b = perfBucket(themeId);
     let interval = null;
@@ -361,7 +394,7 @@
       const d = ts - perf.lastFrameTs;
       if (d > 0 && d < 1000) {      // ignore pauses (hidden tab, debugger)
         interval = d;
-        b.intervals.push(d); if (b.intervals.length > PERF_RING) b.intervals.shift();
+        perfPush(b.intervals, d);
         b.intervalSum += d; b.intervalCount++;
         if (d > PERF_LONG_FRAME_MS) b.longFrames++;
       }
@@ -371,9 +404,14 @@
     b.update += perfSeg.update; b.render += perfSeg.render; b.renderMax = Math.max(b.renderMax, perfSeg.render);
     b.terrain += perfSeg.terrain; b.pieces += perfSeg.pieces; b.piecesMax = Math.max(b.piecesMax, perfSeg.pieces);
     b.figures += perfSeg.figures; b.fx += perfSeg.fx; b.screen += perfSeg.screen;
+    perfPush(b.renders, perfSeg.render); perfPush(b.piecesRing, perfSeg.pieces);
     const s = perf.switchRec;
     if (s && s.to === themeId) {
-      if (s.frames === 0) { s.firstFrameMs = perfNow() - s.at; s.firstRenderMs = perfSeg.render; s.firstInterval = interval; }
+      if (s.frames === 0) {
+        const now = perfNow();
+        s.firstFrameMs = now - s.at; s.firstRenderMs = perfSeg.render; s.firstInterval = interval;
+        if (s.eventTs !== null) s.inputToFirstFrameMs = now - s.eventTs;
+      }
       s.frames++;
       if (interval !== null) { s.maxInterval = Math.max(s.maxInterval, interval); if (interval > PERF_LONG_FRAME_MS) s.longFrames++; }
       s.maxRender = Math.max(s.maxRender, perfSeg.render);
@@ -381,20 +419,68 @@
     }
     for (const k in perfSeg) perfSeg[k] = 0;
   }
-  function perfFinishSwitch() {
+  // The change event's own timestamp (same timebase as performance.now in current browsers) gives the
+  // delay between the input and its handler starting; implausible values (old engines) are dropped.
+  function perfNoteSwitchInput(eventTs) {
+    const s = perf.switchRec;
+    if (!s || typeof eventTs !== "number" || !isFinite(eventTs) || eventTs <= 0) return;
+    const delay = s.at - eventTs;
+    if (delay < 0 || delay > 60000) return;
+    s.eventTs = eventTs; s.inputDelayMs = delay;
+  }
+  // Requests (Resource Timing) whose start falls in [from, to). Entries arrive only after a request
+  // completed, so this is "started in the window and already finished when asked".
+  function perfRequestsStartedIn(from, to) {
+    let n = 0;
+    for (const t of perf.resourceStarts) if (t >= from && t < to) n++;
+    return n;
+  }
+  function perfFinishSwitch(endAt) {
     const s = perf.switchRec;
     if (!s) return;
     perf.switchRec = null;
+    const end = typeof endAt === "number" ? endAt : perfNow();
+    const heap = perfHeapMB();
     const summary = {
       from: s.from, to: s.to, handlerMs: perfRound(s.handlerMs),
+      inputDelayMs: perfRoundOrNull(s.inputDelayMs),
       switchToFirstFrameMs: s.firstFrameMs === null ? null : perfRound(s.firstFrameMs),
+      inputToFirstFrameMs: perfRoundOrNull(s.inputToFirstFrameMs),
       firstRenderMs: s.firstRenderMs === null ? null : perfRound(s.firstRenderMs),
       firstIntervalMs: s.firstInterval === null ? null : perfRound(s.firstInterval),
       framesObserved: s.frames, maxIntervalMs: perfRound(s.maxInterval), longFrames: s.longFrames, maxRenderMs: perfRound(s.maxRender),
       iconRepaintMs: perfRound(perf.iconMs - s.iconMs0), iconSlices: perf.iconSlices - s.iconSlices0,
+      // Requests that STARTED inside this switch window (handler start .. this summary) and had completed
+      // by now; long-lived requests opened earlier (e.g. Firebase long polling) are excluded by their
+      // start time. null = this browser exposes no Resource Timing observer (unknown).
+      networkRequests: perf.observed.resource ? perfRequestsStartedIn(s.at, end) : null,
+      windowMs: perfRound(end - s.at),
+      heapDeltaMB: heap !== null && s.heap0 !== null ? perfRound(heap - s.heap0) : null,
     };
     perf.switches.push(summary); if (perf.switches.length > 20) perf.switches.shift();
     if (typeof console !== "undefined" && console.info) console.info("[Stygian Gambit perf] theme switch", JSON.stringify(summary));
+  }
+  function perfLogTheme(at, id) {
+    perf.themeLog.push({ at, id }); if (perf.themeLog.length > PERF_THEME_LOG) perf.themeLog.shift();
+  }
+  // Theme that was active at timestamp `ts` (performance.now timebase), from the bounded change log;
+  // null when `ts` predates the oldest logged change (diagnostics were off or the log rolled over).
+  function perfThemeAt(ts) {
+    if (typeof ts !== "number" || !isFinite(ts)) return null;
+    const log = perf.themeLog;
+    for (let i = log.length - 1; i >= 0; i--) if (log[i].at <= ts) return log[i].id;
+    return null;
+  }
+  function perfStartSwitch(from, to, at) {
+    if (perf.switchRec) perfFinishSwitch(at);             // log the interrupted one with what it saw
+    perfLogTheme(at, to);
+    perf.switchRec = {
+      from, to, at, handlerMs: perfNow() - at,
+      frames: 0, firstFrameMs: null, firstRenderMs: null, firstInterval: null,
+      eventTs: null, inputDelayMs: null, inputToFirstFrameMs: null,
+      maxInterval: 0, longFrames: 0, maxRender: 0, iconMs0: perf.iconMs, iconSlices0: perf.iconSlices,
+      heap0: perfHeapMB(),
+    };
   }
   function perfReport() {
     const rows = [];
@@ -403,24 +489,113 @@
       rows.push({
         theme: id, frames: b.frames,
         avgIntervalMs: perfRound(b.intervalCount ? b.intervalSum / b.intervalCount : 0),
+        p50IntervalMs: perfRound(perfPercentile(b.intervals, 0.5)),
         p95IntervalMs: perfRound(perfPercentile(b.intervals, 0.95)), maxIntervalMs: perfRound(b.intervals.length ? Math.max(...b.intervals) : 0),
         longFrames: b.longFrames,
-        avgUpdateMs: perfRound(b.update / n), avgRenderMs: perfRound(b.render / n), maxRenderMs: perfRound(b.renderMax),
-        avgTerrainMs: perfRound(b.terrain / n), avgPiecesMs: perfRound(b.pieces / n), maxPiecesMs: perfRound(b.piecesMax),
+        avgUpdateMs: perfRound(b.update / n), avgRenderMs: perfRound(b.render / n),
+        p50RenderMs: perfRound(perfPercentile(b.renders, 0.5)), p95RenderMs: perfRound(perfPercentile(b.renders, 0.95)),
+        maxRenderMs: perfRound(b.renderMax),
+        avgTerrainMs: perfRound(b.terrain / n), avgPiecesMs: perfRound(b.pieces / n),
+        p50PiecesMs: perfRound(perfPercentile(b.piecesRing, 0.5)), p95PiecesMs: perfRound(perfPercentile(b.piecesRing, 0.95)),
+        maxPiecesMs: perfRound(b.piecesMax),
         avgFiguresPerFrame: perfRound(b.figures / n), avgFxMs: perfRound(b.fx / n), avgScreenMs: perfRound(b.screen / n),
+        longAnimationFrames: perf.observed.loaf ? b.loafs : null,
+        maxLongAnimationFrameMs: perf.observed.loaf ? perfRound(b.loafMax) : null,
+        totalBlockingMs: perf.observed.loaf ? perfRound(b.loafBlocking) : null,
       });
     });
+    const heap = perfHeapMB();
     const result = { themes: rows, switches: perf.switches.slice(), iconRepaintMs: perfRound(perf.iconMs),
-                     warmIcons: perf.warmIcons, warmMs: perfRound(perf.warmMs) };
+                     warmIcons: perf.warmIcons, warmSkipped: perf.warmSkipped, warmMs: perfRound(perf.warmMs),
+                     slowInputEvents: perf.events.slice(),
+                     // Completed requests that started after diagnostics were enabled/reset (origin + path only).
+                     networkRequests: perf.observed.resource ? perf.resources : null, recentRequests: perf.resourceNames.slice(),
+                     unattributedLongAnimationFrames: perf.observed.loaf ? perf.loafUnattributed : null,
+                     heapUsedMB: heap === null ? null : perfRound(heap),
+                     supported: { eventTiming: perf.observed.event, longAnimationFrame: perf.observed.loaf, resourceTiming: perf.observed.resource },
+                     note: "Intervals are requestAnimationFrame start-to-start deltas, not GPU presentation; segment times are main-thread canvas-command time." };
     if (typeof console !== "undefined") {
       if (console.table) console.table(rows); else if (console.info) console.info(JSON.stringify(rows));
       if (console.info && result.switches.length) console.info("[Stygian Gambit perf] recent switches", JSON.stringify(result.switches));
     }
     return result;
   }
+  // Browser performance observers live only while diagnostics are on (created by enable, disconnected
+  // by disable). Each one is optional: unsupported entry types are reported as unsupported (null).
+  function perfObserve(type, options, onEntry) {
+    try {
+      if (typeof PerformanceObserver !== "function") return false;
+      const supported = PerformanceObserver.supportedEntryTypes;
+      if (!supported || supported.indexOf(type) < 0) return false;
+      const obs = new PerformanceObserver(list => {
+        if (!perf.on) return;
+        try { list.getEntries().forEach(onEntry); } catch (e) { /* diagnostics must never break the game */ }
+      });
+      obs.observe(Object.assign({ type, buffered: false }, options));
+      perf.observers.push(obs);
+      return true;
+    } catch (e) { return false; }
+  }
+  // Privacy-safe request label: origin + path only (query string and fragment dropped, so tokens or
+  // room ids in query parameters never reach the console); data:/blob: URLs keep only their scheme.
+  function perfSafeUrl(name) {
+    const raw = String(name || "");
+    try {
+      if (typeof URL === "function") {
+        const u = new URL(raw, typeof location !== "undefined" && location && location.href ? location.href : undefined);
+        if (u.protocol !== "http:" && u.protocol !== "https:") return u.protocol;
+        return (u.origin + u.pathname).slice(0, 160);
+      }
+    } catch (e) { /* fall through to the plain-string version */ }
+    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(raw);
+    if (scheme && !/^https?$/i.test(scheme[1])) return scheme[1].toLowerCase() + ":";
+    return raw.split(/[?#]/)[0].slice(0, 160);
+  }
+  function perfStartObservers() {
+    perf.observed.event = perfObserve("event", { durationThreshold: 16 }, e => {
+      if (PERF_EVENT_NAMES.indexOf(e.name) < 0) return;
+      const target = e.target || null;
+      perf.events.push({
+        // Theme active when the input happened (entry.startTime), not when the entry was delivered;
+        // null if that predates the theme log (diagnostics were off then).
+        name: e.name, target: target ? (target.id || target.tagName || null) : null, theme: perfThemeAt(e.startTime),
+        inputDelayMs: perfRound(e.processingStart - e.startTime), processingMs: perfRound(e.processingEnd - e.processingStart),
+        durationToNextPaintMs: perfRound(e.duration),
+      });
+      if (perf.events.length > PERF_EVENT_LIMIT) perf.events.shift();
+    });
+    perf.observed.loaf = perfObserve("long-animation-frame", {}, e => {
+      // Attributed to the theme whose frame was being rendered: the one active at the frame's render
+      // start (rAF callbacks), or at its start when it had no rendering phase. A frame in which a switch
+      // handler ran and the new theme rendered is therefore counted for the new theme.
+      const ts = typeof e.renderStart === "number" && e.renderStart > 0 ? e.renderStart : e.startTime;
+      const id = perfThemeAt(ts);
+      if (id === null) { perf.loafUnattributed++; return; }
+      const b = perfBucket(id);
+      b.loafs++; b.loafMax = Math.max(b.loafMax, e.duration || 0); b.loafBlocking += e.blockingDuration || 0;
+    });
+    perf.observed.resource = perfObserve("resource", {}, e => {
+      // Entries arrive when a request COMPLETES; only requests that also STARTED while diagnostics were
+      // on count (a long poll opened before enabling would otherwise show up on its completion).
+      const start = typeof e.startTime === "number" ? e.startTime : -Infinity;
+      if (!(start >= perf.onSince)) return;
+      perf.resources++;
+      perf.resourceStarts.push(start); if (perf.resourceStarts.length > PERF_RESOURCE_RING) perf.resourceStarts.shift();
+      perf.resourceNames.push(perfSafeUrl(e.name)); if (perf.resourceNames.length > 10) perf.resourceNames.shift();
+    });
+  }
+  function perfStopObservers() {
+    perf.observers.forEach(obs => { try { obs.disconnect(); } catch (e) { /* ignore */ } });
+    perf.observers = [];
+    perf.observed = { event: false, loaf: false, resource: false };
+  }
   function perfReset() {
     perf.buckets.clear(); perf.switches = []; perf.switchRec = null; perf.lastFrameTs = null;
-    perf.iconMs = 0; perf.iconSlices = 0; perf.warmMs = 0; perf.warmIcons = 0;
+    perf.iconMs = 0; perf.iconSlices = 0; perf.warmMs = 0; perf.warmIcons = 0; perf.warmSkipped = 0;
+    perf.events = []; perf.resources = 0; perf.resourceNames = []; perf.resourceStarts = []; perf.loafUnattributed = 0;
+    perf.onSince = perfNow();
+    perf.themeLog = [];
+    perfLogTheme(perf.onSince, currentFigureTheme().id);
     for (const k in perfSeg) perfSeg[k] = 0;
   }
   function perfEnable(persist) {
@@ -428,11 +603,13 @@
     if (perf.on) return;
     perfReset();
     perf.on = true;
+    perfStartObservers();
     if (typeof console !== "undefined" && console.info) console.info("[Stygian Gambit perf] diagnostics on — switch skins, then run SG.perf.report()");
   }
   function perfDisable(clearPersisted) {
     if (clearPersisted) { try { localStorage.removeItem(PERF_STORAGE_KEY); } catch (e) { /* storage blocked */ } }
     perf.on = false; perf.switchRec = null;
+    perfStopObservers();
   }
   SG.perf = { enable: perfEnable, disable: perfDisable, reset: perfReset, report: perfReport };
   (function enablePerfFromFlags() {
@@ -441,7 +618,6 @@
     if (!flag) { try { flag = localStorage.getItem(PERF_STORAGE_KEY) === "1"; } catch (e) { flag = false; } }
     if (flag) perfEnable(false);
   })();
-
   /* ---- Local records (localStorage, guarded) ---- */
   function loadStore(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch (e) { return fallback; } }
   function saveStore(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* private mode / blocked */ } }
@@ -2045,15 +2221,22 @@
     ctx.textBaseline = "alphabetic";
   }
 
+  // Side colours are constants: drawPiece asks for both on every figure of every frame, so the same
+  // frozen objects are returned instead of allocating two fresh ones per call (same values as before).
+  // Nothing in game.js or themes.js writes to them; freezing turns any future write by a painter into a
+  // thrown error (that painter then falls back like any other failing painter) rather than a silent
+  // cross-frame leak.
+  const GLYPH_LIGHT = Object.freeze({ fill: "#8ff2f5", glow: "#2fc6d6" });
+  const GLYPH_DARK = Object.freeze({ fill: "#ffc9b2", glow: "#ff5a48" });
+  const GLYPH_NEUTRAL = Object.freeze({ fill: "#c6ffd4", glow: "#5be07a" });
+  const PAL_LIGHT = Object.freeze({ deep: "#0f3d47", mid: "#1c8a98", bright: "#3fd8e0", rim: "#c4f8fc", gold: "#e8c657" });
+  const PAL_DARK = Object.freeze({ deep: "#5a0f1c", mid: "#a52334", bright: "#e8434f", rim: "#ff9a7a", gold: "#e8c657" });
+  const PAL_NEUTRAL = Object.freeze({ deep: "#1f5a2c", mid: "#2f9a48", bright: "#5be07a", rim: "#c6ffd4", gold: "#d8f0a0" });
   function glyphColor(side) {
-    return side === "light" ? { fill: "#8ff2f5", glow: "#2fc6d6" } :
-           side === "dark" ? { fill: "#ffc9b2", glow: "#ff5a48" } :
-           { fill: "#c6ffd4", glow: "#5be07a" };
+    return side === "light" ? GLYPH_LIGHT : side === "dark" ? GLYPH_DARK : GLYPH_NEUTRAL;
   }
   function sidePalette(side) {
-    if (side === "light") return { deep: "#0f3d47", mid: "#1c8a98", bright: "#3fd8e0", rim: "#c4f8fc", gold: "#e8c657" };
-    if (side === "dark") return { deep: "#5a0f1c", mid: "#a52334", bright: "#e8434f", rim: "#ff9a7a", gold: "#e8c657" };
-    return { deep: "#1f5a2c", mid: "#2f9a48", bright: "#5be07a", rim: "#c6ffd4", gold: "#d8f0a0" };
+    return side === "light" ? PAL_LIGHT : side === "dark" ? PAL_DARK : PAL_NEUTRAL;
   }
 
   // Per-frame constants of drawPiece, built once: a CanvasGradient is resolved in the user space that is
@@ -2431,31 +2614,134 @@
   }
 
   // Theme warm-up. Once the player shows intent to change skin (pointer over, focus on, or press on a
-  // theme picker), the legend icons of the other themes are pre-rendered into the icon cache in small,
-  // yielding slices. That is exactly the work a switch would otherwise do right after the change (same
-  // cache keys, same static ts = 0 pose, same painters and fallbacks), and it also lets the JS engine
-  // parse/compile each theme's painter code before that theme's first animated board frame. Nothing is
-  // drawn on screen, animated board figures are still painted live every frame, and an actual switch's
-  // own icon repaint always goes first.
-  // - Idle-first where supported: requestIdleCallback slices that start an icon only while at least
-  //   WARM_MIN_IDLE_MS of idle time remains; elsewhere one icon per task after a presented frame.
-  // - Guaranteed progress: idle periods can stay shorter than WARM_MIN_IDLE_MS for good (high refresh
-  //   rates, heavy themes) and idle callbacks can be starved, so idle requests carry a timeout and,
-  //   after WARM_IDLE_MISS_LIMIT consecutive idle slices that could not start an icon (idle progress
-  //   resets the count), the chain switches to fallback mode for the rest of its life: one icon per
-  //   after-frame task, never waiting for idle again between icons (queue refreshes keep the mode; a
-  //   new chain starts idle-first again). Every slice is bounded either way, and the warm-up still
-  //   pauses (same chain, same mode) while a real switch's icon repaint is pending.
+  // theme picker), the legend icons of the other themes are pre-rendered into the icon cache. That is
+  // exactly the work a switch would otherwise do right after the change (same cache keys, same static
+  // ts = 0 pose, same painters and fallbacks), and it also lets the JS engine parse/compile each theme's
+  // painter code before that theme's first animated board frame. Nothing is drawn on screen and animated
+  // board figures are still painted live every frame. The warm-up is purely speculative, so it only
+  // ever uses spare time and gives up rather than compete with visible frames:
+  // - Gates, checked by every slice before any icon is started: the document is visible, no real switch
+  //   repaint is pending (that always goes first), the last WARM_HEALTH_FRAMES animation frames were
+  //   all on budget (none longer than max(WARM_LONG_FRAME_MS, 1.5 x the shortest of them), the latest
+  //   one recent), and no press / key / wheel / drag input in the last WARM_INPUT_QUIET_MS.
+  // - With requestIdleCallback: an icon is started only while the idle deadline still has room for it.
+  //   Costs are learned per theme (a theme's painters, not the chain, decide what an icon costs): once a
+  //   theme's icon cost has been measured the room needed is WARM_COST_MARGIN x that estimate (at least
+  //   WARM_MIN_START_MS); for a theme not measured yet it is a cold-start allowance derived from the
+  //   median recent frame interval (WARM_COLD_FRAME_FRACTION of it, clamped to
+  //   [WARM_MIN_START_MS, WARM_MIN_IDLE_MS]: ~6.7 ms at 60 Hz, ~3.3 ms at 120 Hz, 2 ms at 240 Hz), because
+  //   an idle period between frames can never be longer than a frame minus its render. When the next
+  //   job does not fit, the first later job (picker order kept) that fits is taken instead, so one
+  //   expensive theme never blocks the others. A timed-out idle callback does no work, it only re-checks.
+  // - Without requestIdleCallback: at most one icon per WARM_POLL_MS, in a task right after a presented
+  //   frame (a not-yet-measured theme's first icon is a cold start there too).
+  // - Expensive themes: a job whose theme's estimate exceeds WARM_MAX_ICON_MS is dropped from this
+  //   chain (the real switch would paint it on demand anyway). Estimates rise to any slower sample, fall
+  //   halfway towards cheaper ones, ignore near-free cache hits, and decay by WARM_COST_DECAY whenever a
+  //   chain starts or resumes (at most once per WARM_COST_DECAY_MS), so one cold, compile-heavy icon can
+  //   never disable warming for that theme for the rest of the session — it is retried later with a
+  //   lower estimate, and jumps back up if it really is that slow.
+  // - High refresh rates: if the render leaves less idle time per frame than the cold-start allowance
+  //   (or than the learned need), no icon ever fits; the chain then misses, parks and stays parked, and
+  //   switches simply paint their icons on demand as without warm-up. Visible frames are never given up.
+  // - Bounded retries: a slice that could not warm anything is a miss; the next attempt waits
+  //   WARM_RETRY_MS. After WARM_MAX_MISSES consecutive misses (or as soon as the document is hidden)
+  //   the chain parks: nothing stays scheduled until a fresh picker interaction or the document becoming
+  //   visible again resumes it. A pending switch repaint only delays the next attempt (no miss).
+  //   There is never more than one outstanding callback/timer for the chain.
   // - Bounded: themes are taken in picker order starting after the active one (arrow-key order) and only
   //   as many as fit the icon LRU with room to spare, so warming never evicts the active theme's icons.
   // - Never stale: each slice re-derives the plan (active theme, legend canvas sizes) and replaces the
-  //   remaining queue when it changed; a single chain runs at a time, later requests just let it be.
-  // - Hidden document: the rAF fallback pauses, idle callbacks keep the per-icon bound.
-  const WARM_MIN_IDLE_MS = 8;
-  const WARM_IDLE_MISS_LIMIT = 3;
-  const WARM_IDLE_TIMEOUT_MS = 1000;
+  //   remaining queue when it changed.
+  const WARM_MIN_IDLE_MS = 8;            // upper bound of the cold-start allowance (unmeasured theme)
+  const WARM_COLD_FRAME_FRACTION = 0.4;  // cold-start allowance = this x median recent frame interval
+  const WARM_MIN_START_MS = 2;           // never start an icon with less idle time left than this
+  const WARM_COST_MARGIN = 1.5;          // idle time needed = measured icon cost x this margin
+  const WARM_MAX_ICON_MS = 8;            // themes whose icons cost more are skipped for the current chain
+  const WARM_MIN_SAMPLE_MS = 0.2;        // faster than this = a cache hit, says nothing about painting
+  const WARM_COST_DECAY = 0.5;           // estimate multiplier applied when a chain starts / resumes
+  const WARM_COST_DECAY_MS = 5000;       // ... at most once per this interval
+  const WARM_IDLE_TIMEOUT_MS = 1000;     // idle request timeout; a timed-out callback only re-checks
+  const WARM_RETRY_MS = 300;             // pause before the next attempt (>= the input quiet window)
+  const WARM_POLL_MS = 150;              // no-idle-callback browsers: spacing between single-icon tasks
+  const WARM_MAX_MISSES = 8;             // consecutive unproductive slices before the chain parks
+  const WARM_INPUT_QUIET_MS = 300;       // no warming this soon after a press, key, wheel or drag input
+  const WARM_HEALTH_FRAMES = 8;          // recent animation-frame intervals that must all be on budget
+  const WARM_LONG_FRAME_MS = 25;         // an interval longer than this (and 1.5 x the shortest) is a hitch
+  const WARM_STALE_FRAME_MS = 250;       // no animation frame for this long: frames are not flowing
   const WARM_CACHE_HEADROOM = 32;
-  const themeWarm = { scheduled: false, queue: [], key: "", misses: 0, fallback: false };
+  // `costs`: per-theme icon cost estimates in ms (session-wide, at most one entry per theme).
+  const themeWarm = { scheduled: false, parked: false, queue: [], key: "", misses: 0, costs: new Map(), decayedAt: -Infinity };
+  // Cheap signals for the warm-up gates, fed by the render loop (one subtraction and a store per
+  // frame) and by passive input listeners.
+  const warmSignals = { intervals: new Array(WARM_HEALTH_FRAMES).fill(0), count: 0, next: 0, lastTs: null, lastInputAt: -Infinity };
+  function noteWarmFrame(ts) {
+    const w = warmSignals;
+    if (w.lastTs !== null) {
+      const d = ts - w.lastTs;
+      if (d >= 1000) w.count = 0;                         // a pause (hidden tab, debugger): start over
+      else if (d > 0) {
+        w.intervals[w.next] = d; w.next = (w.next + 1) % WARM_HEALTH_FRAMES;
+        if (w.count < WARM_HEALTH_FRAMES) w.count++;
+      }
+    }
+    w.lastTs = ts;
+  }
+  function warmFramesHealthy() {
+    const w = warmSignals;
+    if (w.count < WARM_HEALTH_FRAMES || w.lastTs === null) return false;
+    if (perfNow() - w.lastTs > WARM_STALE_FRAME_MS) return false;
+    let min = Infinity, max = 0;
+    for (let i = 0; i < WARM_HEALTH_FRAMES; i++) { const d = w.intervals[i]; if (d < min) min = d; if (d > max) max = d; }
+    return max <= Math.max(WARM_LONG_FRAME_MS, min * 1.5);
+  }
+  function noteWarmInput(e) {
+    if (e && e.type === "pointermove" && !e.buttons) return;   // hovering is not an interaction
+    warmSignals.lastInputAt = perfNow();
+  }
+  function warmRecentInput() { return perfNow() - warmSignals.lastInputAt < WARM_INPUT_QUIET_MS; }
+  function warmDocHidden() {
+    try { return typeof document !== "undefined" && !!document && (document.hidden === true || document.visibilityState === "hidden"); }
+    catch (e) { return false; }
+  }
+  // Idle room to require before a theme's first (unmeasured) icon: a fraction of the median recent
+  // frame interval, so 120 Hz+ displays are not held to a 60 Hz-sized allowance they can never offer.
+  // Only called once warmFramesHealthy() confirmed WARM_HEALTH_FRAMES fresh intervals.
+  function warmColdNeedMs() {
+    const sorted = warmSignals.intervals.slice().sort((a, b) => a - b);
+    const median = sorted[sorted.length >> 1] || 0;
+    return clamp(median * WARM_COLD_FRAME_FRACTION, WARM_MIN_START_MS, WARM_MIN_IDLE_MS);
+  }
+  function noteWarmCost(themeId, cost) {
+    if (!(cost >= WARM_MIN_SAMPLE_MS) || !isFinite(cost)) return;   // cache hit / bad clock
+    const prev = themeWarm.costs.get(themeId);
+    themeWarm.costs.set(themeId, prev === undefined || cost >= prev ? cost : (prev + cost) / 2);
+  }
+  // Applied when a chain starts or resumes, rate-limited: an estimate inflated by one cold
+  // (compile-heavy) icon shrinks so that theme gets retried; a real slow theme re-learns its cost.
+  function decayWarmCosts() {
+    const now = perfNow();
+    if (now - themeWarm.decayedAt < WARM_COST_DECAY_MS) return;
+    themeWarm.decayedAt = now;
+    themeWarm.costs.forEach((v, id) => themeWarm.costs.set(id, v * WARM_COST_DECAY));
+  }
+  // Index of the first queued job (priority order) that can start now, or -1. Jobs of themes whose
+  // estimate exceeds WARM_MAX_ICON_MS are dropped from the queue on the way (skipped for this chain).
+  // `room` is the idle time left (Infinity on the no-idle path, where only the cost cap applies).
+  function pickThemeWarmJob(room, coldNeed) {
+    const q = themeWarm.queue;
+    for (let i = 0; i < q.length; i++) {
+      const est = themeWarm.costs.get(q[i].themeId);
+      if (est !== undefined && est > WARM_MAX_ICON_MS) {
+        q.splice(i--, 1);
+        if (perf.on) perf.warmSkipped++;
+        continue;
+      }
+      const need = est === undefined ? coldNeed : Math.max(WARM_MIN_START_MS, est * WARM_COST_MARGIN);
+      if (need <= room) return i;
+    }
+    return -1;
+  }
   function themeWarmJobs() {
     const ids = Object.keys(SG.THEMES || {});
     const sizes = new Map();
@@ -2483,52 +2769,93 @@
     try { plan = themeWarmJobs(); } catch (e) { plan = { key: "", jobs: [] }; }
     if (plan.key !== themeWarm.key) { themeWarm.key = plan.key; themeWarm.queue = plan.jobs; }
   }
-  function scheduleThemeWarmSlice() {
-    if (typeof requestIdleCallback === "function" && !themeWarm.fallback) {
-      requestIdleCallback(runThemeWarm, { timeout: WARM_IDLE_TIMEOUT_MS });
+  // Exactly one outstanding callback/timer per chain: only called while `scheduled` is set and no other
+  // callback of the chain is pending (from the running slice's finally, or when starting/resuming).
+  function scheduleThemeWarmSlice(delayMs) {
+    if (typeof requestIdleCallback === "function") {
+      const ask = () => requestIdleCallback(runThemeWarm, { timeout: WARM_IDLE_TIMEOUT_MS });
+      if (delayMs > 0) setTimeout(ask, delayMs); else ask();
     } else {
-      requestAnimationFrame(() => setTimeout(runThemeWarm, 0));
+      setTimeout(() => requestAnimationFrame(() => setTimeout(runThemeWarm, 0)), Math.max(delayMs, WARM_POLL_MS));
     }
+  }
+  function finishThemeWarm() {
+    themeWarm.scheduled = false; themeWarm.parked = false; themeWarm.queue = []; themeWarm.key = ""; themeWarm.misses = 0;
+  }
+  // Parked: nothing scheduled; the remaining queue is kept and re-validated when the chain resumes.
+  function parkThemeWarm() {
+    themeWarm.scheduled = false; themeWarm.parked = true; themeWarm.misses = 0;
+  }
+  function resumeThemeWarm() {
+    if (themeWarm.scheduled || !themeWarm.parked || warmDocHidden()) return;
+    themeWarm.parked = false;
+    themeWarm.scheduled = true;
+    decayWarmCosts();
+    scheduleThemeWarmSlice(0);
   }
   function runThemeWarm(deadline) {
     const idle = !!deadline && typeof deadline.timeRemaining === "function";
+    let outcome = "miss";                                 // "progress" | "wait" | "miss" | "park"
     try {
-      if (iconRepaint.pending) return;                    // a real switch is repainting: retry later
+      if (warmDocHidden()) { outcome = "park"; return; }
+      if (iconRepaint.pending) { outcome = "wait"; return; }   // a real switch is repainting: it goes first
       refreshThemeWarmQueue();
+      if (!themeWarm.queue.length) { outcome = "progress"; return; }
+      // An idle request that fired via its timeout means the browser never found idle time: this slice
+      // only re-checks the gates above and counts as a miss (bounded retry, then park) — it never paints,
+      // whatever timeRemaining() reports. Fallback timer slices get no deadline and are unaffected.
+      if (deadline && deadline.didTimeout === true) return;
+      if (!warmFramesHealthy() || warmRecentInput()) return;    // a miss: visible frames/input come first
+      const coldNeed = idle ? warmColdNeedMs() : 0;
       const start = perf.on ? perfNow() : 0;
-      let done = 0;
+      let handled = 0;
       while (themeWarm.queue.length) {
-        if (idle && deadline.timeRemaining() < WARM_MIN_IDLE_MS) break;
-        const j = themeWarm.queue.shift();
-        done++;
+        const room = idle ? deadline.timeRemaining() : Infinity;
+        if (!(room >= WARM_MIN_START_MS)) break;
+        const pick = pickThemeWarmJob(room, coldNeed);
+        if (pick < 0) break;                              // nothing fits this idle period (or all skipped)
+        const j = themeWarm.queue.splice(pick, 1)[0];
+        handled++;
         if (!SG.THEMES || !hasOwn.call(SG.THEMES, j.themeId)) continue;
         if (j.themeId === currentFigureTheme().id) continue;   // the active theme is handled by its repaint
+        const t0 = perfNow();
         try { iconImage(j.type, j.side, j.w, j.h, j.themeId); }
         catch (err) { if (typeof console !== "undefined") console.warn("[Stygian Gambit] theme warm-up failed for", j.themeId, j.type, err); }
+        noteWarmCost(j.themeId, perfNow() - t0);
         if (perf.on) perf.warmIcons++;
         if (!idle) break;                                 // no idle deadline: one icon per task
       }
-      // An idle slice that could not take a job is a miss; idle progress resets the count. Hitting the
-      // limit latches fallback mode for this chain (fallback slices leave the state untouched).
-      if (idle) {
-        if (!done && themeWarm.queue.length) {
-          if (++themeWarm.misses >= WARM_IDLE_MISS_LIMIT) themeWarm.fallback = true;
-        } else themeWarm.misses = 0;
-      }
       if (perf.on) perf.warmMs += perfNow() - start;
+      if (handled) outcome = "progress";
     } finally {
-      if (themeWarm.queue.length) scheduleThemeWarmSlice();
-      else { themeWarm.scheduled = false; themeWarm.key = ""; themeWarm.misses = 0; themeWarm.fallback = false; }
+      if (outcome === "park") parkThemeWarm();
+      else if (!themeWarm.queue.length && outcome !== "wait") finishThemeWarm();
+      else if (outcome === "progress") { themeWarm.misses = 0; scheduleThemeWarmSlice(0); }
+      else if (outcome === "wait") scheduleThemeWarmSlice(WARM_RETRY_MS);
+      else if (++themeWarm.misses >= WARM_MAX_MISSES) parkThemeWarm();
+      else scheduleThemeWarmSlice(WARM_RETRY_MS);
     }
   }
   function requestThemeWarm() {
-    if (themeWarm.scheduled) return;                      // the running chain re-validates its plan per slice
-    themeWarm.key = ""; themeWarm.queue = []; themeWarm.misses = 0; themeWarm.fallback = false;
+    if (themeWarm.scheduled) { themeWarm.misses = 0; return; }   // fresh intent: full retry budget again
+    themeWarm.parked = false; themeWarm.key = ""; themeWarm.queue = []; themeWarm.misses = 0;
     refreshThemeWarmQueue();
     if (!themeWarm.queue.length) return;
     themeWarm.scheduled = true;
-    scheduleThemeWarmSlice();
+    decayWarmCosts();
+    scheduleThemeWarmSlice(0);
   }
+  (function listenForWarmSignals() {
+    const opts = { capture: true, passive: true };
+    try {
+      if (typeof window !== "undefined" && window && typeof window.addEventListener === "function") {
+        ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"].forEach(type => window.addEventListener(type, noteWarmInput, opts));
+      }
+      if (typeof document !== "undefined" && document && typeof document.addEventListener === "function") {
+        document.addEventListener("visibilitychange", () => { if (!warmDocHidden()) resumeThemeWarm(); });
+      }
+    } catch (e) { /* the warm-up gates then simply see no input; nothing else depends on them */ }
+  })();
 
   function drawSlashes(ts) {
     for (const s of state.slashes) {
@@ -3783,17 +4110,15 @@
     if (persist) { try { localStorage.setItem(THEME_STORAGE_KEY, activeThemeId); } catch (e) { /* storage blocked */ } }
     syncThemeSelects();
     scheduleIconRepaint();
-    if (perf.on) {
-      if (perf.switchRec) perfFinishSwitch();             // log the interrupted one with what it saw
-      perf.switchRec = {
-        from, to: activeThemeId, at: perfStart, handlerMs: perfNow() - perfStart,
-        frames: 0, firstFrameMs: null, firstRenderMs: null, firstInterval: null,
-        maxInterval: 0, longFrames: 0, maxRender: 0, iconMs0: perf.iconMs, iconSlices0: perf.iconSlices,
-      };
-    }
+    if (perf.on) perfStartSwitch(from, activeThemeId, perfStart);
   }
   themeSelects().forEach(sel => {
-    sel.addEventListener("change", e => { if (roomThemeLocked) { syncThemeSelects(); return; } setTheme(e.target.value); });
+    sel.addEventListener("change", e => {
+      if (roomThemeLocked) { syncThemeSelects(); return; }
+      const eventTs = perf.on ? e.timeStamp : null;
+      setTheme(e.target.value);
+      if (perf.on) perfNoteSwitchInput(eventTs);
+    });
     // Intent to change skin: pre-render the other themes' icons while the player is still choosing.
     ["pointerenter", "focus", "pointerdown"].forEach(type => sel.addEventListener(type, requestThemeWarm));
   });
@@ -4228,6 +4553,7 @@
 
   let lastAmbientTs = performance.now();
   function loop(ts) {
+    noteWarmFrame(ts);
     const P = perf.on;
     const updateStart = P ? perfNow() : 0;
     const adt = Math.min((ts - lastAmbientTs) / 1000 || 0, 0.05);
